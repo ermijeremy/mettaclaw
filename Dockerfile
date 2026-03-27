@@ -1,6 +1,11 @@
 # Dockerfile to spin up MeTTaclaw 
 #
-# Includes:  PeTTa, MORK, PathMap
+# Includes:  PeTTa, MORK, PathMap, torch (uncomment if needed)
+#
+# Use command to start:
+#
+# docker run --cap-add NET_ADMIN -it   -e OPENAI_API_KEY=... <image> 
+#
 
 FROM docker.io/library/swipl:latest as os
 
@@ -19,6 +24,7 @@ RUN apt-get update \
       pkg-config \
       cmake \
       iptables \
+      util-linux \
  && rm -rf /var/lib/apt/lists/*
 
 FROM os as build
@@ -86,5 +92,15 @@ RUN cp repos/mettaclaw/firewall.sh /firewall.sh \
  && chmod +x /firewall.sh
 
 WORKDIR /PeTTa
+
+# Allow Mettaclaw limited write access
+RUN chown 65534:65534 repos/mettaclaw/memory/LTM.metta \
+ && chmod 644 repos/mettaclaw/memory/LTM.metta
+RUN chown 65534:65534 repos/mettaclaw/memory/history.metta \
+ && chmod 644 repos/mettaclaw/memory/history.metta
+
+# The firewall script loads the container's rules as root, then reduces privileges to 65534 'nobody' user.
 ENTRYPOINT ["/firewall.sh"]
+
+# Start Mettaclaw
 CMD ["sh", "run.sh", "run.metta", "default"]
