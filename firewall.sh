@@ -27,6 +27,6 @@ iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
 # Allow IRC
 iptables -A OUTPUT -p tcp --dport 6667 -j ACCEPT
 
-echo "Firewall complete."
+echo "Firewall complete by root, now dropping to user level with limited privileges."
 
-exec "$@"
+exec setpriv --reuid=65534 --regid=65534 --clear-groups "$@"
