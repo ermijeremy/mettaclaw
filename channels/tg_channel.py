@@ -18,20 +18,20 @@ class _TelegramChannel:
         self.thread = None
         self.loop = None
         self.application = None
-        self.messages = []
+        self.last_message = None
         self.chat_id = None
         self.msg_lock = threading.Lock()
         self.connected = False
 
-    def enqueue(self, msg):
-        """Append a message to the queue, thread-safe."""
+    def set_last(self, msg):
+        """Store a message as the most recent received message, thread-safe."""
         with self.msg_lock:
-            self.messages.append(msg)
+            self.last_message = msg
 
     def get_last_message(self):
-        """Pop the oldest message from the queue, or return None if empty."""
+        """Retrieve the most recent received message, thread-safe."""
         with self.msg_lock:
-            return self.messages.pop(0) if self.messages else None
+            return self.last_message
 
     async def _start_cmd(self, update: Update):
         """Handle the /start command and register the chat ID."""
@@ -51,7 +51,7 @@ class _TelegramChannel:
             name = "unknown user"
         else:
             name = user.full_name or user.username or str(user.id)
-        self.enqueue(f"{name}: {update.message.text}")
+        self.set_last(f"{name}: {update.message.text}")
 
     async def _runner(self, token):
         """Build the Telegram application, start polling, and run until stopped."""
