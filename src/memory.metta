@@ -31,7 +31,7 @@
 (= (remember $str)
    (if (isTelegram)
        (if (py-call (config_helper.is_memory_forbidden $str))
-           (Error remember "Refused: Sensitive traits/profiling blocked in Telegram mode (YAML Forbidden).")
+           (Error remember "Refused: Sensitive traits/profiling blocked.")
            (py-call (lib_chromadb.remember $str (useGPTEmbedding (string-safe $str)) (get_time_as_string))))
        (py-call (lib_chromadb.remember $str (useGPTEmbedding (string-safe $str)) (get_time_as_string)))))
 
