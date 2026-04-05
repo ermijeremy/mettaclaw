@@ -46,7 +46,7 @@
                         (change-state! &loops (- (get-state &loops) 1)))
           (let $prompt (getContext)
                (progn (println! (---------iteration $k))
-                      (let* ((trace! ("Finished getting last message") ($msgrcv (string-safe (repr (receive)))))
+                      (let* (($msgrcv (string-safe (repr (receive))))
                              ($msgnew (prog1 (and (> (string_length $msgrcv) 0) (!= $msgrcv (get-state &prevmsg)))
                                              (if (!= $msgrcv "") (change-state! &prevmsg $msgrcv) _)))
                              ($msg (get-state &prevmsg))
