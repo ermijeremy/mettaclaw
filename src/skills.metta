@@ -19,11 +19,12 @@
         "- Execute MeTTa expression: (metta string)")))
 
 (= (read-file $file)
-   (if (isTelegram)
+   (if (isTelegramButNotRequired $file)
     (Error read-file "DENIED: File access is disabled in Telegram mode.")
        (progn (translatePredicate (exists_file $file))
               (translatePredicate (read_file_to_string $file $content ()))
-              $content)))
+              $content))
+              )
 
 (= (write-file $file $str)
    (if (isTelegram)
@@ -34,7 +35,7 @@
               True)))
 
 (= (append-file $file $str)
-   (if (isTelegram)
+   (if (isTelegramButNotRequired $file)
         (Error append-file "DENIED: File mutation is disabled in Telegram mode.")
         (progn (translatePredicate (exists_file $file))
               (translatePredicate (open $file append $Out))

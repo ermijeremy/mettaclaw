@@ -149,7 +149,7 @@ logging:
   minimize_sensitive_content_logging: true
 
 admin_controls:
-  admin_ids: [5011454213]  # Add authorized admin Telegram IDs here
+  admin_ids: [441416603]  # Add authorized admin Telegram IDs here
   global_kill_switch: true
   per_chat_pause: true
   per_user_cooldown_or_mute: true

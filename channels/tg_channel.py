@@ -41,6 +41,10 @@ class _TelegramChannel:
         # Load config and policies if they exist
         self.load_config(self.config_path)
         self.load_policies()
+
+        # self.local_memory = self._load_local_memory()
+        self._muted_users = {}
+        self._user_msg_rates = {}
         
         # Windowed batching state
         self._message_buffer = []  # List of (timestamp, name, text, message_id)
@@ -65,8 +69,7 @@ class _TelegramChannel:
             self.reply_only_on_tag = tg_cfg.get("reply_only_when_directly_tagged", True)
             self.reply_on_reply = tg_cfg.get("reply_on_reply_to_bot", True)
             self.dm_enabled = tg_cfg.get("dm_support", {}).get("enabled", False)
-            # self.admin_ids = config.get("admin_controls", {}).get("admin_ids", [])
-            self.admin_ids = [os.environ.get("TG_ADMIN_IDS")]
+            self.admin_ids = config.get("admin_controls", {}).get("admin_ids", [])
 
             logging.info(f"Loaded config from {config_path}: window={self.window_seconds}s, tag_only={self.reply_only_on_tag}")
         except Exception as e:
@@ -142,7 +145,7 @@ class _TelegramChannel:
             await message.answer("⚠️ Global Kill Switch activated. Shutting down...")
             logging.critical(f"KILLED by admin {user_id}")
             self.stop()
-            # The runner will clean up and close the session
+            os._exit(0)
         else:
             await message.answer("❌ Access denied. Admin only.")
 
@@ -164,7 +167,7 @@ class _TelegramChannel:
             return
         
         # Filter out messages from other bots
-        if message.from_user and message.from_user.is_bot:
+        if message.from_user and (message.from_user.is_bot or self.is_user_muted(message.from_user.id)):
             return
 
         if message.chat is not None:
@@ -186,6 +189,11 @@ class _TelegramChannel:
             
             if not self.reply_only_on_tag or is_tagged or is_reply:
                 self._should_reply = True
+            
+            if is_tagged or is_reply:
+                self._last_processed_window = f"{name}: {text}"
+                self._reply_to_id = message.message_id
+
 
     async def _window_manager(self):
         """Every window_seconds, batch buffered messages and surface them if bot was tagged."""
@@ -206,6 +214,33 @@ class _TelegramChannel:
                 # Clear buffer (Retention rules apply: only keep for the window)
                 self._message_buffer = []
 
+    def is_user_muted(self, user_id):
+        """Feature: User mute / cool-down after repeated abuse."""
+        if user_id in self._muted_users:
+            if time.time() < self._muted_users[user_id]:
+                return True
+            else:
+                del self._muted_users[user_id]
+                
+        now = time.time()
+        history = self._user_msg_rates.get(user_id, [])
+        history = [ts for ts in history if now - ts < 10]
+        history.append(now)
+        self._user_msg_rates[user_id] = history
+        
+        if len(history) > 5:
+            logging.warning(f"User {user_id} muted for spamming.")
+            self._muted_users[user_id] = now + 120 # 2 minute cool-down
+            return True
+            
+        return False
+
+    async def _on_media_rejected(self, message: types.Message):
+        """Feature: Block files, images, audio, voice notes."""
+        logging.info("Denied capability invoked: Media/File uploaded. Discarding.")
+        # Silently discard to prevent abuse surface / leakage
+        pass
+
     async def _runner(self, token):
         """Build the aiogram bot, start polling, and run until stopped."""
         self.bot = Bot(token=token)
@@ -223,6 +258,8 @@ class _TelegramChannel:
             self.dp.message.register(self._kill_cmd, Command("kill"))
             self.dp.callback_query.register(self._on_callback_query)
             self.dp.message.register(self._on_message, F.text)
+            self.dp.message.register(self._on_media_rejected, ~F.text)
+
             
             self.connected = True
             
@@ -287,17 +324,14 @@ class _TelegramChannel:
         except Exception:
             pass
 
-# Private instance
 _channel = _TelegramChannel()
 
-# Public API for MeTTa integration
 def getLastMessage():
     """Return the last processed batch window."""
     last_msg = _channel.get_last_message()
     if last_msg is None:
         return ""
         
-    print(f"Retrieved last message batch:\n{last_msg}\n") 
     return str(last_msg)
 
 def start_telegram(token, chat_id=None):

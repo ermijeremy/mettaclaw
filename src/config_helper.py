@@ -29,7 +29,6 @@ def is_tool_disabled(tool_name):
 def get_blocked_ethics_categories():
     config = _load_config()
     categories = config.get("ethics_pass", {}).get("blocked_categories", [])
-    # Format as MeTTa list string if needed, or just return as list for py-call
     return categories
 
 def get_forbidden_memory_categories():
