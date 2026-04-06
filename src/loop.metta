@@ -3,20 +3,23 @@
 (= (LLM) (empty))
 (= (maxOutputToken) (empty))
 (= (reasoningMode) (empty))
+(= (provider) (empty))
 
 (= (initLoop)
-   (progn (configure maxLoops 50) ;20
-          (configure sleepInterval 1) ;10
-          (configure LLM gpt-5.4)
-          (configure maxOutputToken 6000)
-          (configure reasoningMode medium)
+   (progn (println! "=== MettaClaw Configuration ===")
+          (prompt-configure maxLoops 50)
+          (prompt-configure sleepInterval 1)
+          (prompt-configure LLM minimax/minimax-m2.5)
+          (prompt-configure provider ASICloud)
+          (prompt-configure maxOutputToken 6000)
+          (prompt-configure reasoningMode medium)
           (change-state! &prevmsg "")
           (change-state! &lastresults "")
           (change-state! &loops (maxLoops))))
 
 (= (getContext)
    (string-safe (py-str ("PROMPT: " (getPrompt) " SKILLS: " (getSkills)
-                         " OUTPUT_FORMAT: Output a ((skillName1 args1) (skillName2 args2) (skillName3 args3)) S-expression of up to 3 sexpr commands, double-check the parentheses it must me (cmd1 ... cmdn)!"
+                         " OUTPUT_FORMAT: Output a ((skillName1 args1) (skillName2 args2) (skillName3 args3) (skillName4 args4) (skillName5 args5)) S-expression of up to 5 sexpr commands, double-check the parentheses it must be (cmd1 ... cmdn)!"
                          " each arg is an explicit string hence needs quotes, and variables are forbidden!"
                          " LAST_SKILL_USE_RESULTS: " (last_chars (get-state &lastresults) (maxFeedback)) " HISTORY: " (getHistory) " TIME: " (get_time_as_string)))))
 
@@ -48,7 +51,7 @@
                (progn (println! (---------iteration $k))
                       (let* (($msgrcv (string-safe (repr (receive))))
                              ($msgnew (prog1 (and (> (string_length $msgrcv) 0) (!= $msgrcv (get-state &prevmsg)))
-                                             (if (!= $msgrcv "") (change-state! &prevmsg $msgrcv) _)))
+                                             (if (> (string_length $msgrcv) 0) (change-state! &prevmsg $msgrcv) _)))
                              ($msg (get-state &prevmsg))
                              ($_ (if (and (> $k 1) $msgnew)
                                      (change-state! &loops (maxLoops)) _)))
@@ -58,12 +61,14 @@
                                        ($_ (println! $lastmessage))
                                        ($send (py-str ($prompt $lastmessage)))
                                        ($_ (println! (CHARS_SENT: (string_length $send) $send)))
-                                       ($respi (useGPT (LLM) (maxOutputToken) (reasoningMode) $send))
+                                       ($respi (if (== (provider) OpenAI)
+                                                   (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)
+                                                   (py-call (lib_llm_asicloud.useMiniMax $send))))
                                        ($resp (py-call (helper.balance_parentheses $respi)))
                                        ($response (if (== "(" (first_char $resp)) $resp (progn (println! $resp) (repr (REMEMBER:OUTPUT_NOTHING_ELSE_THAN: ((skill arg) ...))))))
                                        ($sexpr (catch (sread $response)))
                                        ($_ (change-state! &error ()))
-                                       ($_ (HandleError MULTI_COMMAND_FAILURE_NOTHING_WAS_DONE_PLEASE_CORRECT_PARENTHESES_AND_RETRY $response $sexpr))
+                                       ($_ (HandleError MULTI_COMMAND_FAILURE_NOTHING_WAS_DONE_PLEASE_CORRECT_PARENTHESES_AND_USE_QUOTES_AND_RETRY $response $sexpr))
                                        ($_ (println! (RESPONSE: $sexpr)))
                                        ($results (RESULTS: (collapse (let $s (superpose $sexpr) (COMMAND_RETURN: ($s (HandleError SINGLE_COMMAND_FORMAT_ERROR_NOTHING_WAS_DONE_PLEASE_FIX_AND_RETRY $s (catch (eval (ethics-pass $s))))))))))
                                        ($_ (println! $results)))

@@ -10,8 +10,6 @@
 (= (MM_URL) (empty))
 (= (MM_CHANNEL_ID) (empty))
 (= (MM_BOT_TOKEN) (empty))
-(= (BOT_TOKEN) (empty))
-(= (CHAT_ID) (empty))
 
 ;Connect all the channels:
 (= (initChannels)
@@ -33,18 +31,23 @@
 
 ;Receive the latest user message considering all communication channels:
 (= (receive)
-   (case (commchannel)
-         ((irc      (py-call (irc.getLastMessage)))
-          (telegram  (py-call (tg_channel.getLastMessage)))
-          ($_ (py-call (mattermost.getLastMessage))))))
+   (if (== (commchannel) irc)
+       (py-call (irc.getLastMessage))
+       (if (== (commchannel) telegram)
+           (py-call (tg_channel.getLastMessage))
+           (py-call (mattermost.getLastMessage)))))
 
 ;Send a message to all communication channels:
+!(change-state! &lastsend "")
 (= (send $msg)
-   (let $safemsg (string-replace $msg  "\n" "\\n")
-        (case (commchannel)
-              ((irc      (let $temp (cut) (py-call (irc.send_message $safemsg))))
-               (telegram  (let $temp (cut) (py-call (tg_channel.send_message $safemsg))))
-               ($_ (let $temp (cut) (py-call (mattermost.send_message $safemsg))))))))
+   (if (!= $msg (get-state &lastsend))
+       (progn (change-state! &lastsend $msg)
+              (let $safemsg (string-replace $msg  "\n" "\\n")
+                   (if (== (commchannel) irc)
+                       (let $temp (cut) (py-call (irc.send_message $safemsg)))
+                       (if (== (commchannel) telegram)
+                           (let $temp (cut) (py-call (tg_channel.send_message $safemsg)))
+                           (let $temp (cut) (py-call (mattermost.send_message $safemsg))))))) _))
 
 ;Search the internet for some information:
 (= (search $msg)

@@ -1,13 +1,15 @@
 ;Configured at runtime memory and history in amount of characters:
 (= (maxFeedback) (empty))
 (= (maxRecallItems) (empty))
+(= (maxEpisodeRecallLines) (empty))
 (= (maxHistory) (empty))
 
 (= (initMemory)
    (progn (println! "Initializing memory")
-          (configure maxFeedback 50000)
-          (configure maxRecallItems 20)
-          (configure maxHistory 30000)))
+          (prompt-configure maxFeedback 50000)
+          (prompt-configure maxRecallItems 20)
+          (prompt-configure maxEpisodeRecallLines 20)
+          (prompt-configure maxHistory 30000)))
 
 (= (getPrompt)
    (read-file (library mettaclaw ./memory/prompt.txt)))
@@ -37,3 +39,6 @@
 
 (= (query $str)
    (py-call (lib_chromadb.query (useGPTEmbedding (string-safe $str)) (maxRecallItems))))
+
+(= (episodes $time)
+   (py-call (helper.around_time $time (maxEpisodeRecallLines))))
