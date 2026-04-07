@@ -13,7 +13,7 @@ telegram:
     if_enabled_treat_as_direct_tag: true
   batching:
     enabled: true
-    window_seconds: 10
+    window_seconds: 5
     max_model_calls_per_chat_per_window: 1
     max_replies_per_chat_per_window: 1
   reply_constraints:

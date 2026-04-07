@@ -37,7 +37,7 @@ class _TelegramChannel:
         self.msg_lock = threading.Lock()
         
         # Default settings
-        self.window_seconds = 10
+        self.window_seconds = 5
         self.reply_only_on_tag = True
         self.reply_on_reply = True
         self.admin_ids = []
@@ -356,7 +356,7 @@ _channel = _TelegramChannel()
 
 def getLastMessage():
     """Return the last processed batch window."""
-    timeout = 10
+    timeout = 5
     start_time = time.time()
     while time.time() - start_time < timeout:
         last_msg = _channel.get_last_message()
@@ -365,10 +365,21 @@ def getLastMessage():
         
         time.sleep(1)
         
-    return str(last_msg)
+    return ""
 
 def start_telegram(token, chat_id=None):
     """Initialize and start the Telegram bot."""
+    if isinstance(token, list) and len(token) > 0:
+        token = str(token[0])
+    
+    token = str(token).strip("\"' ")
+    
+    if isinstance(chat_id, list) and len(chat_id) > 0:
+        chat_id = str(chat_id[0])
+
+    if chat_id is not None:
+        chat_id = str(chat_id).strip("\"' ")
+            
     return _channel.start(token, chat_id)
 
 def stop_telegram():
