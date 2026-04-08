@@ -1,6 +1,6 @@
 ;configured at runtime:
 (= (isTelegram) (== (commchannel) telegram))
-(= (isRequired $file) (or (== $file ./repos/petta_lib_chromadb/../mettaclaw/./memory/prompt.txt) (== $file ./repos/petta_lib_chromadb/../mettaclaw/./memory/history.metta)))
+(= (isRequired $file) (or (== $file (library mettaclaw ./memory/prompt.txt)) (== $file (library mettaclaw ./memory/history.metta))))
 (= (isTelegramButNotRequired $file) (and (isTelegram) (not (isRequired $file))))
 (= (BOT_TOKEN) (empty))
 (= (CHAT_ID) (empty))
