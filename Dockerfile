@@ -88,7 +88,9 @@ RUN chown -R root:root /app \
 # Create a specific isolated data directory for MeTTaClaw's writes (logs, DBs)
 RUN mkdir -p /app/data \
  && chown -R mettauser:mettagroup /app/data \
- && chown -R mettauser:mettagroup /app/mettaclaw/memory
+ && chown -R mettauser:mettagroup /app/mettaclaw/memory \
+ && touch /app/mettaclaw/telegram_bot.log \
+ && chown mettauser:mettagroup /app/mettaclaw/telegram_bot.log
 
 # Environment variables for PeTTa/Janus
 ENV PYTHONPATH=/app/mettaclaw:/app/mettaclaw/src:/app/mettaclaw/channels
