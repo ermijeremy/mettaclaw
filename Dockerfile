@@ -55,8 +55,8 @@ RUN groupadd -r mettagroup && useradd -r -g mettagroup mettauser
 RUN pip3 install --no-cache-dir --break-system-packages \
       janus-swi \
       openai \
-      python-telegram-bot \
-      # aiogram \
+      # python-telegram-bot \
+      aiogram \
       requests \
       websocket-client \
       PyYAML \
