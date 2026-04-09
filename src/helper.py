@@ -44,29 +44,18 @@ def around_time(needle_time_str, k):
 
 def balance_parentheses(s):
     s = s.replace("_quote_", '"').strip()
-    # Find first "((" which should begin the command block
-    cmd_start = s.find("((")
-    if cmd_start == -1:
-        # No command block at all: treat whole thing as narrative
-        narrative = s.strip()
-        if narrative:
-            return f'((pin "{narrative}"))'
-        return "(())"
-    narrative = s[:cmd_start].strip()
-    cmd_part = s[cmd_start:].strip()
-    # Normalize outer parentheses of command part
-    left = 0
-    while left < len(cmd_part) and cmd_part[left] == '(':
-        left += 1
-    right = 0
-    while right < len(cmd_part) and cmd_part[len(cmd_part) - 1 - right] == ')':
-        right += 1
-    core = cmd_part[left:len(cmd_part) - right if right else len(cmd_part)].strip()
-    if narrative:
-        narrative = narrative.replace('"', '\\"')
-        return f'((pin "{narrative}") {core})'
-    else:
-        return f"(({core}))"
+    first_paren = s.find('(')
+    if first_paren > 0:
+        garbage = s[:first_paren].strip()
+        s = s[first_paren:]
+        if garbage:
+            garbage = garbage.replace('"', '\\"')
+            s = s[:1] + f'(pin "{garbage}") ' + s[1:]
+    if s.startswith("((") and s.endswith("))"):
+        return s
+    if s.startswith("(") and s.endswith(")"):
+        return f"({s})"
+    return f"(({s}))"
 
 def normalize_string(x):
     try:
