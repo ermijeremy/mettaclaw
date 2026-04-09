@@ -1,0 +1,15 @@
+services:
+  mettaclaw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mettaclaw
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ASI_API_KEY: ${ASI_API_KEY:-}
+      RUN_TIMEOUT: ${RUN_TIMEOUT:-120}
+    volumes:
+      - ./memory:/opt/petta/repos/mettaclaw/memory
+    mem_limit: ${MEM_LIMIT:-4g}
+    shm_size: ${SHM_SIZE:-1g}
+    restart: ${RESTART_POLICY:-no}
