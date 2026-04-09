@@ -1,0 +1,111 @@
+name: Docker CI
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  docker-build-and-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Docker versions
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Clear previous Docker cache and history
+        run: |
+          docker builder prune -af || true
+          docker system prune -af --volumes || true
+
+      - name: Build image with Compose
+        run: docker compose build --no-cache --pull
+
+      - name: Run containerized startup script
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ASI_API_KEY: ${{ secrets.ASI_API_KEY }}
+          RUN_TIMEOUT: "120"
+        run: |
+          mkdir -p memory
+          docker compose run --rm mettaclaw
+
+      - name: Cleanup containers and volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans
+
+  deploy-to-ovh:
+    name: Deploy To OVH
+    runs-on: ubuntu-latest
+    needs: docker-build-and-run
+    if: ${{ secrets.OVH_HOST != '' && secrets.OVH_USER != '' && secrets.OVH_SSH_KEY != '' }}
+
+    steps:
+      - name: Configure SSH key
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.OVH_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${{ secrets.OVH_PORT || '22' }}" "${{ secrets.OVH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy latest main branch on OVH server
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -p "${{ secrets.OVH_PORT || '22' }}" "${{ secrets.OVH_USER }}@${{ secrets.OVH_HOST }}" <<EOF
+          set -eu
+          APP_DIR="${{ secrets.OVH_APP_DIR || '/opt/mettaclaw' }}"
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+
+          mkdir -p "\$APP_DIR"
+          if [ ! -d "\$APP_DIR/.git" ]; then
+            git clone --branch main "\$REPO_URL" "\$APP_DIR"
+          fi
+
+          cd "\$APP_DIR"
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          if docker compose version >/dev/null 2>&1; then
+            DC="docker compose"
+          elif command -v docker-compose >/dev/null 2>&1; then
+            DC="docker-compose"
+          else
+            echo "Docker Compose is not available on OVH host."
+            exit 1
+          fi
+
+          mkdir -p memory
+
+          OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
+          ASI_API_KEY='${{ secrets.ASI_API_KEY }}' \
+          RUN_TIMEOUT='0' \
+          RESTART_POLICY='unless-stopped' \
+          \$DC down --volumes --remove-orphans --rmi all || true
+
+          docker builder prune -af || true
+          docker image prune -af || true
+          docker container prune -f || true
+          docker volume prune -f || true
+          docker system prune -af --volumes || true
+
+          OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
+          ASI_API_KEY='${{ secrets.ASI_API_KEY }}' \
+          RUN_TIMEOUT='0' \
+          RESTART_POLICY='unless-stopped' \
+          \$DC build --no-cache --pull
+
+          OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
+          ASI_API_KEY='${{ secrets.ASI_API_KEY }}' \
+          RUN_TIMEOUT='0' \
+          RESTART_POLICY='unless-stopped' \
+          \$DC up -d --force-recreate
+
+          \$DC ps
+          EOF
