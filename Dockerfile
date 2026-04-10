@@ -50,7 +50,8 @@ RUN mkdir -p /PeTTa/repos \
 RUN python3 -m pip install --no-cache-dir --break-system-packages \
       janus-swi \
       openai \
-      uagents
+      uagents \
+      chromadb
 
 FROM ${SWIPL_IMAGE} AS runtime
 
@@ -81,6 +82,8 @@ COPY . /PeTTa/repos/omegaclaw
 
 RUN cp /PeTTa/repos/omegaclaw/run.metta /PeTTa/run.metta \
  && ln -s /PeTTa/repos/omegaclaw /PeTTa/repos/omegaClaw-Core \
+ && mkdir ./chroma_db \
+ && chown -R 65534:65534 ./chroma_db \
  && chown -R 65534:65534 /PeTTa/repos/omegaclaw/memory \
  && find /PeTTa/repos/omegaclaw/memory -type f -exec chmod 0644 {} \; \
  && chmod 0444 /PeTTa/repos/omegaclaw/memory/prompt.txt
