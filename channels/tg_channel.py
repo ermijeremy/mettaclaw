@@ -2,11 +2,24 @@ import asyncio
 import time
 import threading
 import logging
+import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 
 import yaml
 import os
+
+def _safe_int(value, default):
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+def _normalize_user_id(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
 
 log_file_path = os.path.join(os.path.dirname(__file__), "..", "telegram_bot.log")
 logging.basicConfig(
@@ -43,6 +56,12 @@ class _TelegramChannel:
         self.reply_on_reply = True
         self.admin_ids = []
         self.dm_enabled = False
+        self.dm_treat_as_direct_tag = True
+        self.purge_memory_enabled = True
+        self.memory_inspect_enabled = True
+        self.memory_delete_enabled = True
+        self.memory_collection_name = "memories"
+        self.chroma_db_path = os.path.join(os.path.dirname(__file__), "..", "chroma_db")
 
         # Policy messages
         self.start_msg = "Telegram mode active."
@@ -85,7 +104,25 @@ class _TelegramChannel:
             self.reply_only_on_tag = tg_cfg.get("reply_only_when_directly_tagged", True)
             self.reply_on_reply = tg_cfg.get("reply_on_reply_to_bot", True)
             self.dm_enabled = tg_cfg.get("dm_support", {}).get("enabled", False)
-            self.admin_ids = config.get("admin_controls", {}).get("admin_ids", [])
+            self.dm_treat_as_direct_tag = tg_cfg.get("dm_support", {}).get("if_enabled_treat_as_direct_tag", True)
+            admin_cfg = config.get("admin_controls", {})
+            self.admin_ids = [
+                uid for uid in (_normalize_user_id(v) for v in admin_cfg.get("admin_ids", [])) if uid is not None
+            ]
+            self.purge_memory_enabled = admin_cfg.get("purge_memory", True)
+            self.memory_inspect_enabled = admin_cfg.get("memory_inspect", True)
+            self.memory_delete_enabled = admin_cfg.get("memory_delete", True)
+
+            learning_cfg = config.get("internal_learning", {}).get("durable_memory", {})
+            self.memory_collection_name = learning_cfg.get("collection_name", "memories")
+            configured_db_path = learning_cfg.get("db_path")
+            if configured_db_path:
+                if os.path.isabs(configured_db_path):
+                    self.chroma_db_path = configured_db_path
+                else:
+                    # Resolve relative DB paths against repo root, not process cwd.
+                    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+                    self.chroma_db_path = os.path.abspath(os.path.join(repo_root, configured_db_path))
 
             logging.info(f"Loaded config from {config_path}: window={self.window_seconds}s, tag_only={self.reply_only_on_tag}")
         except Exception as e:
@@ -170,9 +207,189 @@ class _TelegramChannel:
         else:
             await message.answer("❌ Access denied. Admin only.")
 
+    async def _memory_cmd_help(self, message: types.Message):
+        """Show memory admin subcommands."""
+        if not self._is_admin(message.from_user):
+            return await message.answer("❌ Access denied.")
+        lines = ["🧠 Memory Admin Commands:"]
+        if self.memory_inspect_enabled:
+            lines.append("/memory_list [limit] - List recent memory ids")
+            lines.append("/memory_get <id> - Inspect a memory record")
+            lines.append("/memory_stats - Show memory collection stats")
+        if self.memory_delete_enabled:
+            lines.append("/memory_delete <id> - Delete one memory record")
+        if self.purge_memory_enabled:
+            lines.append("/purge --yes - Purge all memory records")
+        if len(lines) == 1:
+            lines.append("Memory admin commands are disabled by config.")
+        await message.answer("\n".join(lines))
+
+    def _get_memory_collection(self):
+        """Get the persistent memories collection."""
+        import chromadb
+
+        client = chromadb.PersistentClient(path=self.chroma_db_path)
+
+        preferred_names = [self.memory_collection_name, "memories", "memory"]
+        seen = set()
+        candidate_names = [n for n in preferred_names if n and not (n in seen or seen.add(n))]
+
+        # Pick an existing non-empty collection first, otherwise fallback to configured/default one.
+        existing = {c.name: c for c in client.list_collections()}
+        selected_name = None
+        max_count = -1
+        for name in candidate_names:
+            collection = existing.get(name)
+            if collection is None:
+                continue
+            count = collection.count()
+            if count > max_count:
+                max_count = count
+                selected_name = name
+
+        if selected_name is None:
+            selected_name = self.memory_collection_name or "memories"
+
+        return client, client.get_or_create_collection(name=selected_name)
+
+    def _is_admin(self, user):
+        user_id = getattr(user, "id", None)
+        user_id = _normalize_user_id(user_id)
+        return user_id is not None and user_id in self.admin_ids
+
+    async def _memory_list_cmd(self, message: types.Message):
+        """List recent memory ids."""
+        if not self._is_admin(message.from_user):
+            return await message.answer("❌ Access denied.")
+        if not self.memory_inspect_enabled:
+            return await message.answer("⚠️ Memory inspect commands are disabled by config.")
+
+        args = (message.text or "").split()
+        limit = 10
+        if len(args) > 1:
+            limit = max(1, min(_safe_int(args[1], 10), 50))
+
+        try:
+            _, collection = self._get_memory_collection()
+            total = collection.count()
+
+            if total == 0:
+                return await message.answer("ℹ️ No memory records found.")
+
+            limit = min(limit, total)
+            offset = max(0, total - limit)
+            rows = collection.get(
+                limit=limit,
+                offset=offset,
+                include=["documents", "metadatas"],
+            )
+
+            ids = rows.get("ids", [])
+            docs = rows.get("documents", [])
+            metas = rows.get("metadatas", [])
+
+            lines = [f"🧠 Memories: showing {len(ids)}/{total} latest records"]
+            for i, mem_id in enumerate(ids):
+                meta = metas[i] if i < len(metas) and metas[i] else {}
+                ts = meta.get("timestamp") or meta.get("time") or "n/a"
+                doc = docs[i] if i < len(docs) and docs[i] else ""
+                snippet = doc.replace("\n", " ").strip()
+                if len(snippet) > 100:
+                    snippet = snippet[:97] + "..."
+                lines.append(f"- {mem_id} | {ts} | {snippet}")
+
+            out = "\n".join(lines)
+            if len(out) > 3900:
+                out = out[:3897] + "..."
+            await message.answer(out)
+        except Exception as e:
+            await message.answer(f"❌ Failed to list memories: {e}")
+
+    async def _memory_stats_cmd(self, message: types.Message):
+        """Inspect basic memory stats."""
+        if not self._is_admin(message.from_user):
+            return await message.answer("❌ Access denied.")
+        if not self.memory_inspect_enabled:
+            return await message.answer("⚠️ Memory inspect commands are disabled by config.")
+
+        try:
+            client, collection = self._get_memory_collection()
+            names = [c.name for c in client.list_collections()]
+            total = collection.count()
+            lines = [
+                "🧠 Memory Store Stats",
+                f"DB path: {self.chroma_db_path}",
+                f"Active collection: {collection.name}",
+                f"Record count: {total}",
+                f"Collections: {', '.join(names) if names else 'none'}",
+            ]
+            await message.answer("\n".join(lines))
+        except Exception as e:
+            await message.answer(f"❌ Failed to inspect memory stats: {e}")
+
+    async def _memory_get_cmd(self, message: types.Message):
+        """Inspect one memory record by id."""
+        if not self._is_admin(message.from_user):
+            return await message.answer("❌ Access denied.")
+        if not self.memory_inspect_enabled:
+            return await message.answer("⚠️ Memory inspect commands are disabled by config.")
+
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) < 2:
+            return await message.answer("Usage: /memory_get <id>")
+
+        mem_id = args[1].strip()
+        if not mem_id:
+            return await message.answer("Usage: /memory_get <id>")
+
+        try:
+            _, collection = self._get_memory_collection()
+            rows = collection.get(ids=[mem_id], include=["documents", "metadatas"])
+            ids = rows.get("ids", [])
+
+            if not ids:
+                return await message.answer(f"ℹ️ Memory id not found: {mem_id}")
+
+            doc = (rows.get("documents") or [""])[0] or ""
+            meta = (rows.get("metadatas") or [{}])[0] or {}
+            ts = meta.get("timestamp") or meta.get("time") or "n/a"
+
+            out = f"🧠 Memory Record\nID: {mem_id}\nTimestamp: {ts}\nText:\n{doc}"
+            if len(out) > 3900:
+                out = out[:3897] + "..."
+            await message.answer(out)
+        except Exception as e:
+            await message.answer(f"❌ Failed to inspect memory: {e}")
+
+    async def _memory_delete_cmd(self, message: types.Message):
+        """Delete one memory record by id."""
+        if not self._is_admin(message.from_user):
+            return await message.answer("❌ Access denied.")
+        if not self.memory_delete_enabled:
+            return await message.answer("⚠️ Memory delete command is disabled by config.")
+
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) < 2:
+            return await message.answer("Usage: /memory_delete <id>")
+
+        mem_id = args[1].strip()
+        if not mem_id:
+            return await message.answer("Usage: /memory_delete <id>")
+
+        try:
+            _, collection = self._get_memory_collection()
+            probe = collection.get(ids=[mem_id], include=[])
+            if not probe.get("ids"):
+                return await message.answer(f"ℹ️ Memory id not found: {mem_id}")
+
+            collection.delete(ids=[mem_id])
+            await message.answer(f"✅ Deleted memory record: {mem_id}")
+        except Exception as e:
+            await message.answer(f"❌ Failed to delete memory: {e}")
+
     async def _pause_cmd(self, message: types.Message):
         """Handle /pause command (admin only)."""
-        if message.from_user.id not in self.admin_ids:
+        if not self._is_admin(message.from_user):
             return await message.answer("❌ Access denied.")
 
         target_chat = message.chat.id
@@ -189,7 +406,7 @@ class _TelegramChannel:
 
     async def _togglesearch_cmd(self, message: types.Message):
         """Handle /togglesearch command (admin only)."""
-        if message.from_user.id not in self.admin_ids:
+        if not self._is_admin(message.from_user):
             return await message.answer("❌ Access denied.")
 
         self.search_disabled = not self.search_disabled
@@ -198,14 +415,19 @@ class _TelegramChannel:
 
     async def _purge_cmd(self, message: types.Message):
         """Handle /purge command (admin only)."""
-        if message.from_user.id not in self.admin_ids:
+        if not self._is_admin(message.from_user):
             return await message.answer("❌ Access denied.")
+        if not self.purge_memory_enabled:
+            return await message.answer("⚠️ Memory purge is disabled by config.")
+
+        args = (message.text or "").split()
+        if "--yes" not in args:
+            return await message.answer("⚠️ Confirm purge with: /purge --yes")
 
         try:
-            import chromadb
-            client = chromadb.PersistentClient(path="./chroma_db")
-            client.delete_collection("memories")
-            client.get_or_create_collection(name="memories")
+            client, collection = self._get_memory_collection()
+            client.delete_collection(collection.name)
+            client.get_or_create_collection(name=collection.name)
             await message.answer("🗑️ Long-term memory purged successfully.")
         except Exception as e:
             await message.answer(f"❌ Failed to purge memory: {e}")
@@ -217,14 +439,21 @@ class _TelegramChannel:
         elif callback.data == "show_privacy":
             await callback.message.answer(self.privacy_msg)
         elif callback.data == "admin_panel":
-            if callback.from_user.id in self.admin_ids:
+            if self._is_admin(callback.from_user):
                 cmd_list = (
                     "🛠 **Admin Commands:**\n"
                     "/pause [chat_id] - Pause/unpause a chat\n"
                     "/togglesearch - Enable/Disable Web Search\n"
-                    "/purge - Wipe ChromaDB Memory\n"
                     "/kill - Shutdown Bot globally"
                 )
+                if self.memory_inspect_enabled:
+                    cmd_list += "\n/memory_list [limit] - List memory records"
+                    cmd_list += "\n/memory_get <id> - Inspect one memory"
+                    cmd_list += "\n/memory_stats - Show memory stats"
+                if self.memory_delete_enabled:
+                    cmd_list += "\n/memory_delete <id> - Delete one memory"
+                if self.purge_memory_enabled:
+                    cmd_list += "\n/purge --yes - Wipe all memory records"
                 await callback.message.answer(cmd_list)
             else:
                 await callback.message.answer("❌ Access denied.")
@@ -269,6 +498,11 @@ class _TelegramChannel:
 
             # Use rules from config
             is_tagged = self.bot_username and f"@{self.bot_username}" in text
+            is_dm_direct = (
+                message.chat.type == "private"
+                and self.dm_enabled
+                and self.dm_treat_as_direct_tag
+            )
             is_reply = (
                 self.reply_on_reply
                 and message.reply_to_message
@@ -276,7 +510,7 @@ class _TelegramChannel:
                 and message.reply_to_message.from_user.id == self.bot_id
             )
 
-            if not self.reply_only_on_tag or is_tagged or is_reply:
+            if not self.reply_only_on_tag or is_tagged or is_reply or is_dm_direct:
                 self._should_reply[chat_id] = True
 
     async def _window_manager(self):
@@ -359,6 +593,11 @@ class _TelegramChannel:
             self.dp.message.register(self._kill_cmd, Command("kill"))
             self.dp.message.register(self._pause_cmd, Command("pause"))
             self.dp.message.register(self._togglesearch_cmd, Command("togglesearch"))
+            self.dp.message.register(self._memory_cmd_help, Command("memory"))
+            self.dp.message.register(self._memory_list_cmd, Command("memory_list"))
+            self.dp.message.register(self._memory_get_cmd, Command("memory_get"))
+            self.dp.message.register(self._memory_stats_cmd, Command("memory_stats"))
+            self.dp.message.register(self._memory_delete_cmd, Command("memory_delete"))
             self.dp.message.register(self._purge_cmd, Command("purge"))
             self.dp.callback_query.register(self._on_callback_query)
             self.dp.message.register(self._on_message, F.text)
@@ -434,7 +673,8 @@ _channel = _TelegramChannel()
 
 def getLastMessage():
     """Return the last processed batch window."""
-    timeout = 5
+    # Keep timeout above window size to avoid polling race at exact boundary.
+    timeout = max(6, int(_channel.window_seconds) + 2)
     start_time = time.time()
     while time.time() - start_time < timeout:
         last_msg = _channel.get_last_message()
