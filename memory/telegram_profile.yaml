@@ -9,11 +9,11 @@ telegram:
   reply_only_when_directly_tagged: true
   reply_on_reply_to_bot: true
   dm_support:
-    enabled: false
+    enabled: true
     if_enabled_treat_as_direct_tag: true
   batching:
     enabled: true
-    window_seconds: 30
+    window_seconds: 5
     max_model_calls_per_chat_per_window: 1
     max_replies_per_chat_per_window: 1
   reply_constraints:
@@ -66,6 +66,8 @@ internal_learning:
   durable_memory:
     enabled: true
     scope: telegram_local
+    db_path: ./chroma_db
+    collection_name: memories
     categories_allowed:
       - channel_norm
       - explicit_user_preference
@@ -154,4 +156,6 @@ admin_controls:
   per_chat_pause: true
   per_user_cooldown_or_mute: true
   disable_search_only: true
+  memory_inspect: true
+  memory_delete: true
   purge_memory: true
