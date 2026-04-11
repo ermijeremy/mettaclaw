@@ -63,7 +63,7 @@ class _TelegramChannel:
         self._should_reply = {}
         self._reply_to_ids = {}
         self._paused_chats = set()
-        self.search_disabled = False
+        self.search_disabled = True
         self._last_processed_window = None
         self._reply_to_id = None
         self._ready_windows = []
