@@ -18,7 +18,8 @@
           (change-state! &loops (maxLoops))))
 
 (= (getContext)
-   (string-safe (py-str ("PROMPT: " (getPrompt) " SKILLS: " (getSkills)
+   (string-safe (py-str ("PROMPT: " (getPrompt)
+                         " SKILLS: " (getSkills)
                          " OUTPUT_FORMAT: Output a ((skillName1 args1) (skillName2 args2) (skillName3 args3) (skillName4 args4) (skillName5 args5)) S-expression of up to 5 sexpr commands, double-check the parentheses it must be (cmd1 ... cmdn)!"
                          " each arg is an explicit string hence needs quotes, and variables are forbidden!"
                          " LAST_SKILL_USE_RESULTS: " (last_chars (get-state &lastresults) (maxFeedback)) " HISTORY: " (getHistory) " TIME: " (get_time_as_string)))))
@@ -33,6 +34,7 @@
 (= (mettaclaw $k)
    (progn (if (== $k 1) (progn (initLoop)
                                (initMemory)
+                               (initKnowledge)
                                (initChannels))
                         (change-state! &loops (- (get-state &loops) 1)))
           (let $prompt (getContext)
@@ -44,10 +46,11 @@
                              ($_ (if (and (> $k 1) $msgnew)
                                      (change-state! &loops (maxLoops)) _)))
                             (if (> (get-state &loops) 0)
-                                (let* (($lastmessage (HUMAN-LAST-MSG: $msg
+                                (let* (($knowledge (getKnowledge (string-safe $msg)))
+                                       ($lastmessage (HUMAN-LAST-MSG: $msg
                                                       MESSAGE-IS-NEW: $msgnew))
                                        ($_ (println! $lastmessage))
-                                       ($send (py-str ($prompt $lastmessage)))
+                                       ($send (py-str ($prompt " KNOWLEDGE_CONTEXT: " $knowledge " " $lastmessage)))
                                        ($_ (println! (CHARS_SENT: (string_length $send) $send)))
                                        ($respi (if (== (provider) OpenAI)
                                                    (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)
