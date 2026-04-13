@@ -1,6 +1,7 @@
 import yaml
 import os
 import logging
+import re
 import openai
 
 _config_cache = None
@@ -78,3 +79,25 @@ def is_memory_forbidden(text):
 def get_allowed_skills():
     config = _load_config()
     return config.get("internal_learning", {}).get("learned_skills", {}).get("classes_allowed", [])
+
+
+def is_safe_metta_code(code_str: str) -> bool:
+    """Check if MeTTa code contains dangerous escape hatches or mutations."""
+    # List of strictly forbidden primitives
+    forbidden_tokens = {
+        'py-call',
+        'translatePredicate',
+        'import!',
+        'bind!',
+        'shell', 'write-file',
+        'append-file', 'read-file'
+    }
+    
+    # Extract all tokens (words) ignoring parentheses and whitespace
+    tokens = re.findall(r'[^\s\(\)]+', code_str)
+    
+    for token in tokens:
+        if token in forbidden_tokens:
+            return False
+            
+    return True

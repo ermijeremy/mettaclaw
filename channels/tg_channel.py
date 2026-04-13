@@ -421,13 +421,28 @@ class _TelegramChannel:
             return
         
         fut = asyncio.run_coroutine_threadsafe(
-            self.bot.send_message(chat_id=self.chat_id, text=text, reply_to_message_id=self._reply_to_id),
+            self.bot.send_message(chat_id=self.chat_id,
+                                  text=text,
+                                  reply_to_message_id=self._reply_to_id,
+                                  parse_mode="MarkdownV2"),
             self.loop,
         )
         try:
             fut.result(timeout=10)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Telegram formatting error, falling back to plain text: {e}")
+            fut_fallback = asyncio.run_coroutine_threadsafe(
+                self.bot.send_message(
+                    chat_id=self.chat_id, 
+                    text=text, 
+                    reply_to_message_id=self._reply_to_id
+                ),
+                self.loop,
+            )
+            try:
+                fut_fallback.result(timeout=10)
+            except Exception:
+                pass
 
 _channel = _TelegramChannel()
 

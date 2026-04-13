@@ -5,7 +5,16 @@
            "- Query long-term embedding memory: (query string)"
            "- Pin a short-term working memory item: (pin string)"
            "- Send message to user: (send string)"
-        "- Search the web: (search string)")
+           "- Search the web: (search string)"
+           "- Execute MeTTa expression: (metta sexpression)"
+               "- Example to invoke Non-Axiomatic Logic via MeTTa: "
+               "- (metta (|- ((--> (× sam garfield) friend) (stv 1.0 0.9))"
+               "-            ((--> garfield animal) (stv 1.0 0.9))))"
+               "- (metta (|- ((==> (--> (× $1 elephant) eat) (--> $1 ([] dangerous))) (stv 1.0 0.9))"
+               "-            ((--> (× tiger elephant) eat) (stv 1.0 0.9))))"
+               "- Also: note the $1 for independent variables, and for negated knowledge use (stv 0.0 0.9)"
+               "- Additionally |- also works for revision, to merge evidence even when the term of both premises is the same.")
+
        (;DEFAULT ALLOWED SKILLS:
         "- Remember a particular string: (remember string)"
         "- Query long-term embedding memory: (query string)"
@@ -27,7 +36,7 @@
               )
 
 (= (write-file $file $str)
-   (if (isTelegram)
+   (if (isTelegramButNotRequired $file)
         (Error write-file "DENIED: File mutation is disabled in Telegram mode.")
        (progn (translatePredicate (open $file write $Out))
               (translatePredicate (write $Out $str))
@@ -52,6 +61,6 @@
        (let $temp (cut) (translatePredicate (run_cmd $cmd $out)) $out)))
 
 (= (metta $str)
-   (if (isTelegram)
-        (Error metta "DENIED: MeTTa evaluation is disabled in Telegram mode.")
-       (let $code (sread $str) (eval $code))))
+   (if (== (py-call (config_helper.is_safe_metta_code $str)) True)
+       (let $code (sread $str) (eval $code))
+       (Error metta "DENIED: Execution blocked. Unsafe MeTTa primitives detected.")))
