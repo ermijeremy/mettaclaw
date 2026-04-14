@@ -1,29 +1,104 @@
-FROM ubuntu:24.04
+# ==========================================
+# Stage 1: Build Environment (Heavy tools stay here)
+# ==========================================
+FROM docker.io/library/swipl:latest as build
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git \
+      build-essential \
+      python3 \
+      python3-pip \
+      python3-dev \
+      ca-certificates \
+      pkg-config \
+      cmake \
+      libopenblas-dev \
+      libblas-dev \
+      liblapack-dev \
+      gfortran \
+      libgflags-dev \
+ && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates \
-       git \
-       swi-prolog \
-       python3 \
-       python3-pip \
-       python3-venv \
-       coreutils \
-    && rm -rf /var/lib/apt/lists/*
+# Install FAISS (Static Library)
+RUN git clone --depth 1 https://github.com/facebookresearch/faiss.git /faiss
+WORKDIR /faiss
+RUN cmake -B build -DFAISS_ENABLE_GPU=OFF -DFAISS_ENABLE_PYTHON=OFF -DBUILD_SHARED_LIBS=OFF \
+ && cmake --build build --config Release --parallel 2 \
+ && cmake --install build
 
-RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
-    && /opt/venv/bin/pip install --no-cache-dir openai requests websocket-client
+# Install PeTTa (MeTTa-to-Prolog transpiler)
+RUN git clone --depth 1 https://github.com/trueagi-io/PeTTa.git /PeTTa
+WORKDIR /PeTTa
+RUN sh build.sh
 
-ENV PATH="/opt/venv/bin:${PATH}"
+# ==========================================
+# Stage 2: Production Environment (Lean & Secure)
+# ==========================================
+FROM docker.io/library/swipl:latest as final
 
-WORKDIR /opt/petta
-RUN git clone https://github.com/trueagi-io/PeTTa .
+# Install runtime necessities (gosu for non-root, iptables for firewall)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      python3-dev \
+      build-essential \
+      iptables \
+      gosu \
+      coreutils \
+ && rm -rf /var/lib/apt/lists/*
 
-COPY . /opt/petta/repos/mettaclaw
-COPY scripts/run.sh /usr/local/bin/run.sh
-RUN chmod +x /usr/local/bin/run.sh
+# Create a non-root user and group
+RUN groupadd -r mettagroup && useradd -r -g mettagroup mettauser
 
-CMD ["/usr/local/bin/run.sh"]
+# Install Python dependencies required by MeTTaClaw
+RUN pip3 install --no-cache-dir --break-system-packages \
+      janus-swi \
+      openai \
+      aiogram \
+      requests \
+      websocket-client \
+      PyYAML \
+      chromadb
+
+# Set up the working directory
+WORKDIR /app
+
+# Copy compiled artifacts from the build stage
+COPY --from=build /PeTTa /app/PeTTa
+COPY --from=build /usr/local/lib/libfaiss.a /usr/local/lib/
+
+# Setup the project structure
+COPY . /app/mettaclaw
+
+# Link MeTTaClaw into PeTTa/repos so it can be imported as a library
+RUN mkdir -p /app/PeTTa/repos \
+ && ln -s /app/mettaclaw /app/PeTTa/repos/mettaclaw \
+ && cp /app/mettaclaw/run.metta /app/PeTTa/run.metta \
+ && cp /app/mettaclaw/firewall.sh /firewall.sh \
+ && chmod +x /firewall.sh
+
+# Lock down filesystem permissions
+RUN chown -R root:root /app \
+ && chmod -R 755 /app
+
+# Create a specific isolated data directory for MeTTaClaw's writes (logs, DBs)
+RUN mkdir -p /app/data \
+ && chown -R mettauser:mettagroup /app/data \
+ && chown -R mettauser:mettagroup /app/mettaclaw/memory \
+ && touch /app/mettaclaw/telegram_bot.log \
+ && chown mettauser:mettagroup /app/mettaclaw/telegram_bot.log
+
+# Environment variables for PeTTa/Janus
+ENV PYTHONPATH=/app/mettaclaw:/app/mettaclaw/src:/app/mettaclaw/channels
+
+# Change working directory to PeTTa root to run run.sh
+WORKDIR /app/PeTTa
+
+ENTRYPOINT ["/firewall.sh"]
+
+COPY scripts/start.sh /usr/local/bin/start.sh
+RUN chmod +x /usr/local/bin/start.sh
+
+# Use gosu to step down to non-root user
+CMD ["gosu", "mettauser", "/usr/local/bin/start.sh"]

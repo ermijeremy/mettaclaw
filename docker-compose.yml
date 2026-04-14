@@ -7,9 +7,16 @@ services:
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ASI_API_KEY: ${ASI_API_KEY:-}
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN:-}
+      TG_CHAT_ID: ${TG_CHAT_ID:-}
+      MM_URL: ${MM_URL:-}
+      MM_CHANNEL_ID: ${MM_CHANNEL_ID:-}
+      MM_BOT_TOKEN: ${MM_BOT_TOKEN:-}
       RUN_TIMEOUT: ${RUN_TIMEOUT:-120}
+    cap_add:
+      - NET_ADMIN
     volumes:
-      - ./memory:/opt/petta/repos/mettaclaw/memory
+      - ./memory:/app/PeTTa/repos/mettaclaw/memory
     mem_limit: ${MEM_LIMIT:-4g}
     shm_size: ${SHM_SIZE:-1g}
     restart: ${RESTART_POLICY:-no}
