@@ -18,7 +18,8 @@
           (change-state! &loops (maxLoops))))
 
 (= (getContext)
-   (string-safe (py-str ("PROMPT: " (getPrompt) " SKILLS: " (getSkills)
+   (string-safe (py-str ("PROMPT: " (getPrompt)
+                         " SKILLS: " (getSkills)
                          " OUTPUT_FORMAT: Output a ((skillName1 args1) (skillName2 args2) (skillName3 args3) (skillName4 args4) (skillName5 args5)) S-expression of up to 5 sexpr commands, double-check the parentheses it must be (cmd1 ... cmdn)!"
                          " each arg is an explicit string hence needs quotes, and variables are forbidden!"
                          " LAST_SKILL_USE_RESULTS: " (last_chars (get-state &lastresults) (maxFeedback)) " HISTORY: " (getHistory) " TIME: " (get_time_as_string)))))
@@ -28,31 +29,12 @@
                                           (change-state! &error $new)))
                  ($else $sexpr))))
 
-(= (ethics-pass $sexpr)
-   (if (isTelegram)
-       (case $sexpr 
-         (((search $s) (if (== (py-call (tg_channel.is_search_disabled)) True) 
-                           (Error search "Refused: Search is disabled by admin.")
-                           (if (py-call (config_helper.is_category_blocked $s)) 
-                               (progn (py-call (tg_channel.alert_ethics_violation "search")) (Error search "Refused: Unsafe search query.")) 
-                               $sexpr)))
-          ((send $s) (if (py-call (config_helper.is_category_blocked $s)) 
-                         (progn (py-call (tg_channel.alert_ethics_violation "send")) (Error send "Refused: Unsafe response content.")) 
-                         $sexpr))
-          ((remember $s) (if (py-call (config_helper.is_memory_forbidden $s)) 
-                             (progn (py-call (tg_channel.alert_ethics_violation "remember")) (Error remember "Refused: Sensitive traits/profiling blocked.")) 
-                             $sexpr))
-          ($else $sexpr)))
-       $sexpr))
-
-(= (is-unsafe $s) (py-call (config_helper.is_category_blocked $s)))
-(= (is-sensitive $s) (py-call (config_helper.is_memory_forbidden $s)))
-
 (= (mettaclaw)
    (mettaclaw 1))
 (= (mettaclaw $k)
    (progn (if (== $k 1) (progn (initLoop)
                                (initMemory)
+                               (initKnowledge)
                                (initChannels))
                         (change-state! &loops (- (get-state &loops) 1)))
           (let $prompt (getContext)
@@ -64,10 +46,11 @@
                              ($_ (if (and (> $k 1) $msgnew)
                                      (change-state! &loops (maxLoops)) _)))
                             (if (> (get-state &loops) 0)
-                                (let* (($lastmessage (HUMAN-LAST-MSG: $msg
+                                (let* (($knowledge (getKnowledge (string-safe $msg)))
+                                       ($lastmessage (HUMAN-LAST-MSG: $msg
                                                       MESSAGE-IS-NEW: $msgnew))
                                        ($_ (println! $lastmessage))
-                                       ($send (py-str ($prompt $lastmessage)))
+                                       ($send (py-str ($prompt " KNOWLEDGE_CONTEXT: " $knowledge " " $lastmessage)))
                                        ($_ (println! (CHARS_SENT: (string_length $send) $send)))
                                        ($respi (if (== (provider) OpenAI)
                                                    (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)
@@ -78,7 +61,7 @@
                                        ($_ (change-state! &error ()))
                                        ($_ (HandleError MULTI_COMMAND_FAILURE_NOTHING_WAS_DONE_PLEASE_CORRECT_PARENTHESES_AND_USE_QUOTES_AND_RETRY $response $sexpr))
                                        ($_ (println! (RESPONSE: $sexpr)))
-                                       ($results (RESULTS: (collapse (let $s (superpose $sexpr) (COMMAND_RETURN: ($s (HandleError SINGLE_COMMAND_FORMAT_ERROR_NOTHING_WAS_DONE_PLEASE_FIX_AND_RETRY $s (catch (eval (ethics-pass $s))))))))))
+                                       ($results (RESULTS: (collapse (let $s (superpose $sexpr) (COMMAND_RETURN: ($s (HandleError SINGLE_COMMAND_FORMAT_ERROR_NOTHING_WAS_DONE_PLEASE_FIX_AND_RETRY $s (catch (eval $s)))))))))
                                        ($_ (println! $results)))
                                       (progn (if (or $msgnew  (not (== $sexpr ()))) (addToHistory $msg $response $sexpr $msgnew) _)
                                              (change-state! &lastresults (string-safe (repr $results))))) _))
