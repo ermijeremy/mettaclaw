@@ -43,24 +43,13 @@ def around_time(needle_time_str, k):
     return ret
 
 def balance_parentheses(s):
-    s = s.replace("_quote_", '"').strip()
-    first_paren = s.find('(')
-    if first_paren > 0:
-        garbage = s[:first_paren].strip()
-        s = s[first_paren:]
-        if garbage:
-            garbage = garbage.replace('"', '\\"')
-            s = s[:1] + f'(pin "{garbage}") ' + s[1:]
-    if s.startswith("((") and s.endswith("))"):
-        return s
-    if s.startswith("(") and s.endswith(")"):
-        return f"({s})"
-    return f"(({s}))"
-
-def normalize_string(x):
-    try:
-        if isinstance(x, bytes):
-            return x.decode("utf-8", errors="ignore")
-        return str(x).encode("utf-8", errors="ignore").decode("utf-8", errors="ignore")
-    except Exception:
-        return str(x)
+    s=s.replace("_quote_", '"')
+    s = s.strip()
+    left = 0
+    while left < len(s) and s[left] == '(':
+        left += 1
+    right = 0
+    while right < len(s) and s[len(s) - 1 - right] == ')':
+        right += 1
+    core = s[left:len(s) - right if right else len(s)].strip()
+    return f"(({core}))"

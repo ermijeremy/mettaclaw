@@ -1,4 +1,9 @@
 ;configured at runtime:
+(= (isTelegram) (== (commchannel) telegram))
+(= (isRequired $file) (or (== $file (library mettaclaw ./memory/prompt.txt)) (== $file (library mettaclaw ./memory/history.metta))))
+(= (isTelegramButNotRequired $file) (and (isTelegram) (not (isRequired $file))))
+(= (BOT_TOKEN) (empty))
+(= (CHAT_ID) (empty))
 (= (IRC_channel) (empty))
 (= (IRC_server) (empty))
 (= (IRC_port) (empty))
@@ -11,23 +16,28 @@
 ;Connect all the channels:
 (= (initChannels)
    (progn (println! "Initializing channels")
-          (configure commchannel irc)
-          (if (== (commchannel) irc)
-              (progn (configure IRC_channel ##metta)
-                     (configure IRC_server "irc.quakenet.org")
-                     (configure IRC_port 6667)
-                     (configure IRC_user maxbotnick)
-                     (py-call (irc.start_irc (IRC_channel) (IRC_server) (IRC_port) (IRC_user))))
-              (progn (configure MM_URL "https://chat.singularitynet.io")
-                     (configure MM_CHANNEL_ID "8fjrmabjx7gupy7e5kjznpt5qh")
-                     (configure MM_BOT_TOKEN "")
-                     (py-call (mattermost.start_mattermost (MM_URL) (MM_CHANNEL_ID) (MM_BOT_TOKEN)))))))
+          (configure commchannel telegram)
+          (case (commchannel)
+                ((irc      (progn (configure IRC_channel ##metta)
+                                  (configure IRC_server "irc.quakenet.org")
+                                  (configure IRC_port 6667)
+                                  (configure IRC_user maxbotnick)
+                                  (py-call (irc.start_irc (IRC_channel) (IRC_server) (IRC_port) (IRC_user)))))
+                 (telegram  (progn (configure BOT_TOKEN "") ;; remove after test
+                                    (configure CHAT_ID "")
+                                   (py-call (tg_channel.start_telegram (BOT_TOKEN) (CHAT_ID)))))
+                 ($_ (progn (configure MM_URL "https://chat.singularitynet.io")
+                            (configure MM_CHANNEL_ID "8fjrmabjx7gupy7e5kjznpt5qh")
+                            (configure MM_BOT_TOKEN "acympttqpjyjfnm9j65gz7mzbw")
+                            (py-call (mattermost.start_mattermost (MM_URL) (MM_CHANNEL_ID) (MM_BOT_TOKEN)))))))))
 
 ;Receive the latest user message considering all communication channels:
 (= (receive)
    (if (== (commchannel) irc)
        (py-call (irc.getLastMessage))
-       (py-call (mattermost.getLastMessage))))
+       (if (== (commchannel) telegram)
+           (py-call (tg_channel.getLastMessage))
+           (py-call (mattermost.getLastMessage)))))
 
 ;Send a message to all communication channels:
 !(change-state! &lastsend "")
@@ -37,7 +47,9 @@
               (let $safemsg (string-replace $msg  "\n" "\\n")
                    (if (== (commchannel) irc)
                        (let $temp (cut) (py-call (irc.send_message $safemsg)))
-                       (let $temp (cut) (py-call (mattermost.send_message $safemsg)))))) _))
+                       (if (== (commchannel) telegram)
+                           (let $temp (cut) (py-call (tg_channel.send_message $safemsg)))
+                           (let $temp (cut) (py-call (mattermost.send_message $safemsg))))))) _))
 
 ;Search the internet for some information:
 (= (search $msg)
