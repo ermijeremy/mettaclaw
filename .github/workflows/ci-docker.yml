@@ -22,7 +22,7 @@ jobs:
       - name: Clear previous Docker cache and history
         run: |
           docker builder prune -af || true
-          docker system prune -af --volumes || true
+          docker system prune -af || true
 
       - name: Build image with Compose
         run: docker compose build --no-cache --pull
@@ -47,65 +47,66 @@ jobs:
     if: ${{ secrets.OVH_HOST != '' && secrets.OVH_USER != '' && secrets.OVH_SSH_KEY != '' }}
 
     steps:
-      - name: Configure SSH key
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          printf '%s\n' "${{ secrets.OVH_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${{ secrets.OVH_PORT || '22' }}" "${{ secrets.OVH_HOST }}" >> ~/.ssh/known_hosts
-
       - name: Deploy latest main branch on OVH server
-        run: |
-          ssh -i ~/.ssh/id_ed25519 -p "${{ secrets.OVH_PORT || '22' }}" "${{ secrets.OVH_USER }}@${{ secrets.OVH_HOST }}" <<EOF
-          set -eu
-          APP_DIR="${{ secrets.OVH_APP_DIR || '/opt/mettaclaw' }}"
-          REPO_URL="https://github.com/${{ github.repository }}.git"
+        uses: appleboy/ssh-action@v1
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ASI_API_KEY: ${{ secrets.ASI_API_KEY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          MM_URL: ${{ secrets.MM_URL }}
+          MM_CHANNEL_ID: ${{ secrets.MM_CHANNEL_ID }}
+          MM_BOT_TOKEN: ${{ secrets.MM_BOT_TOKEN }}
+        with:
+          host: ${{ secrets.OVH_HOST }}
+          username: ${{ secrets.OVH_USER }}
+          key: ${{ secrets.OVH_SSH_KEY }}
+          port: ${{ secrets.OVH_PORT || '22' }}
+          envs: OPENAI_API_KEY,ASI_API_KEY,TG_BOT_TOKEN,TG_CHAT_ID,MM_URL,MM_CHANNEL_ID,MM_BOT_TOKEN
+          script: |
+            set -eu
+            APP_DIR="${{ secrets.OVH_APP_DIR || '/opt/mettaclaw' }}"
+            REPO_URL="https://github.com/${{ github.repository }}.git"
 
-          mkdir -p "\$APP_DIR"
-          if [ ! -d "\$APP_DIR/.git" ]; then
-            git clone --branch main "\$REPO_URL" "\$APP_DIR"
-          fi
+            mkdir -p "$APP_DIR"
+            if [ ! -d "$APP_DIR/.git" ]; then
+              git clone --branch main "$REPO_URL" "$APP_DIR"
+            fi
 
-          cd "\$APP_DIR"
-          git fetch origin main
-          git checkout main
-          git pull --ff-only origin main
+            cd "$APP_DIR"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
 
-          if docker compose version >/dev/null 2>&1; then
-            DC="docker compose"
-          elif command -v docker-compose >/dev/null 2>&1; then
-            DC="docker-compose"
-          else
-            echo "Docker Compose is not available on OVH host."
-            exit 1
-          fi
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              DC="docker-compose"
+            else
+              echo "Docker Compose is not available on OVH host."
+              exit 1
+            fi
 
-          mkdir -p memory
+            mkdir -p memory
 
-          OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
-          ASI_API_KEY='${{ secrets.ASI_API_KEY }}' \
-          RUN_TIMEOUT='0' \
-          RESTART_POLICY='unless-stopped' \
-          \$DC down --volumes --remove-orphans --rmi all || true
+            umask 077
+            : > .env
+            printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY" >> .env
+            printf 'ASI_API_KEY=%s\n' "$ASI_API_KEY" >> .env
+            printf 'TG_BOT_TOKEN=%s\n' "$TG_BOT_TOKEN" >> .env
+            printf 'TG_CHAT_ID=%s\n' "$TG_CHAT_ID" >> .env
+            printf 'MM_URL=%s\n' "$MM_URL" >> .env
+            printf 'MM_CHANNEL_ID=%s\n' "$MM_CHANNEL_ID" >> .env
+            printf 'MM_BOT_TOKEN=%s\n' "$MM_BOT_TOKEN" >> .env
+            printf 'RUN_TIMEOUT=0\n' >> .env
+            printf 'RESTART_POLICY=unless-stopped\n' >> .env
 
-          docker builder prune -af || true
-          docker image prune -af || true
-          docker container prune -f || true
-          docker volume prune -f || true
-          docker system prune -af --volumes || true
+            $DC down --remove-orphans --rmi all || true
 
-          OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
-          ASI_API_KEY='${{ secrets.ASI_API_KEY }}' \
-          RUN_TIMEOUT='0' \
-          RESTART_POLICY='unless-stopped' \
-          \$DC build --no-cache --pull
+            docker builder prune -af || true
+            docker image prune -af || true
+            docker container prune -f || true
 
-          OPENAI_API_KEY='${{ secrets.OPENAI_API_KEY }}' \
-          ASI_API_KEY='${{ secrets.ASI_API_KEY }}' \
-          RUN_TIMEOUT='0' \
-          RESTART_POLICY='unless-stopped' \
-          \$DC up -d --force-recreate
-
-          \$DC ps
-          EOF
+            $DC build --no-cache --pull
+            $DC up -d --force-recreate
+            $DC ps
