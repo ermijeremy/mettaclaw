@@ -11,7 +11,7 @@ from src.config_helper import is_category_blocked
 import yaml
 import os
 
-log_file_path = os.path.join(os.path.dirname(__file__), "..", "telegram_bot.log")
+log_file_path = os.path.join(os.path.dirname(__file__), "..", "memory", "telegram_bot.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
