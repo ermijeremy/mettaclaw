@@ -7,6 +7,7 @@ import openai
 _config_cache = None
 _config_mtime = 0
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "memory", "telegram_profile.yaml")
+openai_client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 def _load_config():
     global _config_cache, _config_mtime
@@ -39,7 +40,7 @@ def get_forbidden_memory_categories():
     config = _load_config()
     return config.get("internal_learning", {}).get("durable_memory", {}).get("categories_forbidden", [])
 
-def _llm_classify(text, categories):
+async def _llm_classify(text, categories):
     if not categories or not text.strip():
         return False
         
@@ -51,6 +52,12 @@ def _llm_classify(text, categories):
     )
     
     try:
+        response = await openai_client.moderations.create(input=text)
+        return response.results[0].flagged
+        
+    except Exception as e:
+        logging.error(f"OpenAI moderation error: {e}")
+        logging.info(f"Opting to model usage for classification...")
         client = openai.OpenAI()
         response = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -60,10 +67,6 @@ def _llm_classify(text, categories):
         )
         answer = response.choices[0].message.content.strip().upper()
         return "YES" in answer
-    except Exception as e:
-        logging.error(f"LLM Ethics Classification failed (Failing closed): {e}")
-        return True
-
 
 def is_category_blocked(text):
     config = _load_config()
@@ -80,24 +83,15 @@ def get_allowed_skills():
     config = _load_config()
     return config.get("internal_learning", {}).get("learned_skills", {}).get("classes_allowed", [])
 
+async def flagged_by_moderator(text: str) -> bool:
+    """Check text against OpenAI's moderation endpoint."""
+    if not text:
+        return False
+    try:
+        response = await openai_client.moderations.create(input=text)
+        return response.results[0].flagged
+    except Exception as e:
+        logging.error(f"OpenAI moderation error: {e}")
+        logging.INFO("Opting to model usage...")
 
-def is_safe_metta_code(code_str: str) -> bool:
-    """Check if MeTTa code contains dangerous escape hatches or mutations."""
-    # List of strictly forbidden primitives
-    forbidden_tokens = {
-        'py-call',
-        'translatePredicate',
-        'import!',
-        'bind!',
-        'shell', 'write-file',
-        'append-file', 'read-file'
-    }
-    
-    # Extract all tokens (words) ignoring parentheses and whitespace
-    tokens = re.findall(r'[^\s\(\)]+', code_str)
-    
-    for token in tokens:
-        if token in forbidden_tokens:
-            return False
-            
-    return True
+        return False

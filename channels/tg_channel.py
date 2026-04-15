@@ -5,7 +5,7 @@ import time
 import logging
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from src.config_helper import is_category_blocked
+from src.config_helper import is_category_blocked, flagged_by_moderator
 
 
 import yaml
@@ -256,7 +256,7 @@ class _TelegramChannel:
         name = "unknown user" if user is None else (user.full_name or user.username or str(user.id))
         text = message.text
 
-        if is_category_blocked(text):
+        if is_category_blocked(text) or await flagged_by_moderator(text):
             logging.warning(f"Ethics pass rejected incoming message from {name}: {text}")
             message = "From: " + user.username + ": " + text if user and user.username else text
             alert_ethics_violation("incoming_message", message)

@@ -7,6 +7,8 @@ services:
     container_name: mettaclaw
     hostname: mettaclaw
     restart: unless-stopped
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
 
     # Run as the same fixed UID/GID created in the Dockerfile
     user: "10001:10001"
