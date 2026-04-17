@@ -15,10 +15,6 @@ log_file_path = os.path.join(os.path.dirname(__file__), "..", "memory", "telegra
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(log_file_path),
-        logging.StreamHandler()
-    ]
 )
 
 class _TelegramChannel:
