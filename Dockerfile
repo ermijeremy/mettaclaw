@@ -130,7 +130,12 @@ VOLUME ["/PeTTa/repos/OmegaClaw-Core/memory", "/PeTTa/chroma_db", "/app/data"]
 # Python module search path
 ENV PYTHONPATH=/PeTTa/repos/OmegaClaw-Core:/PeTTa/repos/OmegaClaw-Core/src:/PeTTa/repos/OmegaClaw-Core/channels
 
-ENTRYPOINT ["/firewall.sh"]
+# Optional healthcheck placeholder
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python3 -c "import os; assert os.path.isdir('/app/mettaclaw')" || exit 1
+
+# Minimal init process
+ENTRYPOINT ["/usr/bin/tini", "--"]
 
 # Use gosu to step down to non-root user
 CMD ["gosu", "omegauser", "sh", "run.sh", "run.metta", "default"]

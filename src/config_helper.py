@@ -7,8 +7,10 @@ import openai
 _config_cache = None
 _config_mtime = 0
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "memory", "telegram_profile.yaml")
+openai_client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
 def _load_config():
+    """Loads and caches the telegram profile YAML configuration."""
     global _config_cache, _config_mtime
 
     if _config_cache is not None:
@@ -27,77 +29,87 @@ def _load_config():
     return _config_cache
 
 def is_tool_disabled(tool_name):
+    """Checks if a specified tool is disabled in the configuration."""
     config = _load_config()
     return config.get("disabled_tools", {}).get(tool_name, False)
 
 def get_blocked_ethics_categories():
+    """Retrieves the list of blocked ethics categories."""
     config = _load_config()
     categories = config.get("ethics_pass", {}).get("blocked_categories", [])
     return categories
 
 def get_forbidden_memory_categories():
+    """Retrieves the list of forbidden categories for memory storage."""
     config = _load_config()
     return config.get("internal_learning", {}).get("durable_memory", {}).get("categories_forbidden", [])
 
-def _llm_classify(text, categories):
-    if not categories or not text.strip():
-        return False
-        
-    prompt = (
-        f"Does the following expression fall into any of these strictly forbidden categories?\n\n"
-        f"Forbidden Categories: {', '.join(categories)}\n\n"
-        f"Expression: '{text}'\n\n"
-        f"Answer ONLY 'YES' if it violates a category, or 'NO' if it is safe."
-    )
-    
-    try:
-        client = openai.OpenAI()
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
+async def use_model(text, categories):
+    """Uses an LLM to classify if text violates the provided categories."""
+    config = _load_config()
+    model_config = config.get("classification_model", {})
+    model_name = model_config.get("name", "gpt-4o-mini")
+    max_tokens = model_config.get("max_tokens", 10)
+    temperature = model_config.get("temperature", 0.0)
+
+    try: 
+        prompt = (
+            f"Does the following expression fall into any of these strictly forbidden categories?\n\n"
+            f"Forbidden Categories: {', '.join(categories)}\n\n"
+            f"Expression: '{text}'\n\n"
+            f"Answer ONLY 'YES' if it violates a category, or 'NO' if it is safe."
+        )
+        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        response = await client.chat.completions.create(
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=10,
-            temperature=0.0
+            max_tokens=max_tokens,
+            temperature=temperature
         )
         answer = response.choices[0].message.content.strip().upper()
         return "YES" in answer
+    
     except Exception as e:
-        logging.error(f"LLM Ethics Classification failed (Failing closed): {e}")
-        return True
+        logging.error(f"OpenAI classification error: {e}")
+        return False
 
+async def _llm_classify(text, categories, memCheck=False):
+    """Classifies text using OpenAI's Moderation API or falls back to standard LLM classification."""
+    if not categories or not text.strip():
+        return False
+    
+    if memCheck:
+        return use_model(text, categories)
+            
+    try:
+        response = await openai_client.moderations.create(input=text)
+        return response.results[0].flagged
+        
+    except Exception as e:
+        logging.error(f"OpenAI moderation error: {e}")
+        logging.info(f"Opting to model usage for classification...")
+        return use_model(text, categories)
 
 def is_category_blocked(text):
+    """Checks if the text violates any blocked ethics categories."""
     config = _load_config()
     blocked = config.get("ethics_pass", {}).get("blocked_categories", [])
     return _llm_classify(text, blocked)
 
 def is_memory_forbidden(text):
+    """Checks if the text contains topics forbidden from long-term memory."""
     config = _load_config()
     forbidden = config.get("internal_learning", {}).get("durable_memory", {}).get("categories_forbidden", [])
     text = text.lower()
     return _llm_classify(text, forbidden)
 
-def get_allowed_skills():
+def get_spam_protection_config():
+    """Retrieves spam protection thresholds from the configuration."""
     config = _load_config()
-    return config.get("internal_learning", {}).get("learned_skills", {}).get("classes_allowed", [])
-
-
-def is_safe_metta_code(code_str: str) -> bool:
-    """Check if MeTTa code contains dangerous escape hatches or mutations."""
-    # List of strictly forbidden primitives
-    forbidden_tokens = {
-        'py-call',
-        'translatePredicate',
-        'import!',
-        'bind!',
-        'shell', 'write-file',
-        'append-file', 'read-file'
+    spam_config = config.get("spam_protection", {})
+    return {
+        "time_window": spam_config.get("time_window", 10),
+        "message_limit": spam_config.get("message_limit", 5),
+        "cooldown_duration": spam_config.get("cooldown_duration", 120),
+        "admin_alert_threshold": spam_config.get("admin_alert_threshold", 3)
     }
-    
-    # Extract all tokens (words) ignoring parentheses and whitespace
-    tokens = re.findall(r'[^\s\(\)]+', code_str)
-    
-    for token in tokens:
-        if token in forbidden_tokens:
-            return False
-            
-    return True
