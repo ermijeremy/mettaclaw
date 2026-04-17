@@ -28,10 +28,6 @@ log_file_path = os.path.join(os.path.dirname(__file__), "..", "telegram_bot.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(log_file_path),
-        logging.StreamHandler()
-    ]
 )
 
 class _TelegramChannel:
