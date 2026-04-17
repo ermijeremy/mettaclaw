@@ -43,6 +43,7 @@ class _TelegramChannel:
         self.reply_on_reply = True
         self.admin_ids = []
         self.dm_enabled = False
+        self.reply_constraints = None
         
         # Policy messages
         self.start_msg = "Telegram mode active."
@@ -82,6 +83,7 @@ class _TelegramChannel:
             self.reply_on_reply = tg_cfg.get("reply_on_reply_to_bot", True)
             self.dm_enabled = tg_cfg.get("dm_support", {}).get("enabled", False)
             self.admin_ids = config.get("admin_controls", {}).get("admin_ids", [])
+            self.reply_constraints = tg_cfg.get("reply_constraints", {})
 
             logging.info(f"Loaded config from {config_path}: window={self.window_seconds}s, tag_only={self.reply_only_on_tag}")
         except Exception as e:
@@ -241,12 +243,20 @@ class _TelegramChannel:
             if getattr(message.from_user, "id", None) not in self.admin_ids and not self.dm_enabled:
                 return
         
-        # Filter out messages from other bots
+        # Filter out messages from other bots and muted users
         if message.from_user:
             if message.from_user.is_bot:
                 return
             if await self.is_user_muted(message.from_user):
                 return
+        
+        has_media = bool(message.photo or message.video or message.audio or message.voice)
+        if has_media and not self.reply_constraints.get("allow_media", False):
+            return
+            
+        has_files = bool(message.document)
+        if has_files and not self.reply_constraints.get("allow_files", False):
+            return
 
         if message.chat is not None:
             chat_id = message.chat.id

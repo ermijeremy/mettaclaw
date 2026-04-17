@@ -10,7 +10,7 @@
           (configure maxRecallItems 20)
           (configure maxEpisodeRecallLines 20)
           (configure maxHistory 30000)
-          (configure embeddingprovider Local) ;OpenAI or Local
+          (configure embeddingprovider OpenAI) ;OpenAI or Local
           (if (== (embeddingprovider) Local)
               (py-call (lib_llm_ext.initLocalEmbedding)) _)))
 
@@ -36,13 +36,10 @@
    (append-file-raw (library OmegaClaw-Core ./memory/history.metta) (swrite $addition)))
 
 (= (remember $str)
-   (if (isTelegram)
        (if (py-call (config_helper.is_memory_forbidden $str))
            (Error remember "Refused: Sensitive traits/profiling blocked.")
            (progn (py-call (lib_chromadb.remember $str (embed $str) (get_time_as_string)))
-                  REMEMBER-SUCCESS))
-       (progn (py-call (lib_chromadb.remember $str (embed $str) (get_time_as_string)))
-              REMEMBER-SUCCESS)))
+                  REMEMBER-SUCCESS)))
 
 (= (query $str)
    (py-call (lib_chromadb.query (embed (string-safe $str)) (maxRecallItems))))

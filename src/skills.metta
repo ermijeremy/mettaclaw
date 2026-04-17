@@ -53,9 +53,7 @@
           APPEND-FILE-SUCCESS))
 
 (= (append-file $file $str)
-   (if (isTelegram)
-       (Error append-file "DENIED: File mutation is disabled in Telegram mode.")
-       (append-file-raw $file $str)))
+       (append-file-raw $file $str))
 
 (= (tavily-search $query)
    (py-call (agentverse.tavily_search $query)))

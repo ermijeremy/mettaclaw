@@ -11,11 +11,6 @@ telegram:
   dm_support:
     enabled: false
     if_enabled_treat_as_direct_tag: true
-  batching:
-    enabled: true
-    window_seconds: 30
-    max_model_calls_per_chat_per_window: 1
-    max_replies_per_chat_per_window: 1
   reply_constraints:
     same_chat_only: true
     text_only: true
@@ -24,40 +19,25 @@ telegram:
     allow_admin_actions: false
     allow_new_outbound_chats: false
 
-callable_capabilities:
-  telegram_reply:
-    enabled: true
-    constraints:
-      - same_chat_only
-      - text_only
-      - no_files
-      - no_admin_actions
-  safe_search_lookup:
-    enabled: true
-    result_mode: snippets_only
-    constraints:
-      - no_clickthrough
-      - no_forms
-      - no_login
-      - no_arbitrary_url_fetch
-      - no_authenticated_sites
-      - no_file_downloads
+admin_controls:
+  admin_ids: [] # Add authorized admin Telegram IDs here
+  global_kill_switch: true
+  per_chat_pause: true
+  per_user_cooldown_or_mute: true
+  disable_search_only: true
+  purge_memory: true
 
-disabled_tools:
-  shell: true
-  sudo: true
-  file_read: true
-  file_write: true
-  file_append: true
-  send_file: true
-  send_message_outside_current_chat: true
-  browser_automation: true
-  arbitrary_http: true
-  arbitrary_eval: true
-  plugin_install: true
-  connector_access: true
-  memory_write_tool: true
-  skill_creation_tool: true
+classification_model:
+  name: "gpt-4o-mini"
+  max_tokens: 10
+  temperature: 0.0
+
+spam_protection:
+  time_window: 10
+  message_limit: 5
+  cooldown_duration: 120
+  admin_alert_threshold: 3
+
 
 internal_learning:
   enabled: true
@@ -148,21 +128,21 @@ logging:
     - skill_activation_result
   minimize_sensitive_content_logging: true
 
-admin_controls:
-  admin_ids: [] # Add authorized admin Telegram IDs here
-  global_kill_switch: true
-  per_chat_pause: true
-  per_user_cooldown_or_mute: true
-  disable_search_only: true
-  purge_memory: true
-
-classification_model:
-  name: "gpt-4o-mini"
-  max_tokens: 10
-  temperature: 0.0
-
-spam_protection:
-  time_window: 10
-  message_limit: 5
-  cooldown_duration: 120
-  admin_alert_threshold: 3
+callable_capabilities:
+  telegram_reply:
+    enabled: true
+    constraints:
+      - same_chat_only
+      - text_only
+      - no_files
+      - no_admin_actions
+  safe_search_lookup:
+    enabled: true
+    result_mode: snippets_only
+    constraints:
+      - no_clickthrough
+      - no_forms
+      - no_login
+      - no_arbitrary_url_fetch
+      - no_authenticated_sites
+      - no_file_downloads
