@@ -23,6 +23,10 @@
           (change-state! &lastresults "")
           (change-state! &loops (maxNewInputLoops))))
 
+(= (initKnowledge)
+   (progn (println! "Initializing knowledge base")
+          (println! (py-call (rag.init_knowledge)))))
+
 (= (getContext)
    (let* (($prompt (getPrompt))
           ($skills (getSkills))

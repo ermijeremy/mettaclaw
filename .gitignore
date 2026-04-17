@@ -1,5 +1,8 @@
 # embedded vector store
 memory/chroma_db/
+chroma_db/
+knowledge_db/
+
 
 # pulled in repos
 repos/
@@ -17,9 +20,6 @@ __pycache__/
 
 # C extensions
 *.so
-
-# Chroma db
-knowledge_db/
 
 # Distribution / packaging
 .Python

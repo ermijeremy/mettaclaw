@@ -7,11 +7,12 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from src.config_helper import is_category_blocked, get_spam_protection_config
 
-
+import asyncio
 import yaml
 import os
 
 log_file_path = os.path.join(os.path.dirname(__file__), "..", "logs","telegram_bot.log")
+os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -265,7 +266,7 @@ class _TelegramChannel:
         name = "unknown user" if user is None else (user.full_name or user.username or str(user.id))
         text = message.text
 
-        if is_category_blocked(text):
+        if await is_category_blocked(text):
             logging.warning(f"Ethics/Security pass rejected incoming message from {name}: {text}")
             message = "From: " + user.username + ": " + text if user and user.username else text
             alert_ethics_violation("incoming_message", message)
@@ -466,8 +467,15 @@ def stop_telegram():
     _channel.stop()
 
 def send_message(text):
-    """Send a message to the active Telegram chat."""
-    if is_category_blocked(text):
+    """Send a message to the active Telegram chat."""    
+    # Run the async check safely in a synchronous context
+    try:
+        loop = asyncio.get_running_loop()
+        is_blocked = loop.run_until_complete(is_category_blocked(text))
+    except RuntimeError:
+        is_blocked = asyncio.run(is_category_blocked(text))
+
+    if is_blocked:
         alert_ethics_violation("send", text)
         return "Error: Refused: Unsafe response content."
         

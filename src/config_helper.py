@@ -3,6 +3,7 @@ import os
 import logging
 import re
 import openai
+import asyncio
 
 _config_cache = None
 _config_mtime = 0
@@ -79,7 +80,7 @@ async def _llm_classify(text, categories, memCheck=False):
         return False
     
     if memCheck:
-        return use_model(text, categories)
+        return await use_model(text, categories)
             
     try:
         response = await openai_client.moderations.create(input=text)
@@ -88,21 +89,22 @@ async def _llm_classify(text, categories, memCheck=False):
     except Exception as e:
         logging.error(f"OpenAI moderation error: {e}")
         logging.info(f"Opting to model usage for classification...")
-        return use_model(text, categories)
+        return await use_model(text, categories)
 
-def is_category_blocked(text):
+async def is_category_blocked(text):
     """Checks if the text violates any blocked ethics categories."""
     config = _load_config()
     blocked = config.get("ethics_pass", {}).get("blocked_categories", [])
-    return _llm_classify(text, blocked)
+    return await _llm_classify(text, blocked)
 
-def is_memory_forbidden(text):
+
+async def is_memory_forbidden(text):
     """Checks if the text contains topics forbidden from long-term memory."""
     config = _load_config()
     forbidden = config.get("internal_learning", {}).get("durable_memory", {}).get("categories_forbidden", [])
     text = text.lower()
-    return _llm_classify(text, forbidden)
-
+    return await _llm_classify(text, forbidden)
+    
 def get_spam_protection_config():
     """Retrieves spam protection thresholds from the configuration."""
     config = _load_config()
