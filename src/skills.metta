@@ -1,11 +1,4 @@
 (= (getSkills)
-   (if (isTelegram)
-       (;TELEGRAM ALLOWED SKILLS:
-           "- Remember a particular string: (remember string)"
-           "- Query long-term embedding memory: (query string)"
-           "- Pin a short-term working memory item: (pin string)"
-           "- Send message to user: (send string)"
-        "- Search the web: (search string)")
        (;DEFAULT ALLOWED SKILLS:
         "- Remember a particular string such as skills and memories: (remember string_in_quotes)"
         "- Query long-term embedding memory for skills and memories with short phrases only: (query string_in_quotes)"
@@ -33,7 +26,7 @@
         "You can also use PLN:"
         "(metta (|~ ((Implication (Inheritance $1 (IntSet Feathered))"
         "            (Inheritance $1 Bird)) (stv 1.0 0.9))"
-        "           ((Inheritance Pingu (IntSet Feathered)) (stv 1.0 0.9))))")))
+        "           ((Inheritance Pingu (IntSet Feathered)) (stv 1.0 0.9))))"))
 
 (= (read-file-raw $file)
    (progn (translatePredicate (open $file read $In))
@@ -42,17 +35,15 @@
           $content))
 
 (= (read-file $file)
-   (if (isTelegram)
-       (Error read-file "DENIED: File access is disabled in Telegram mode.")
-       (read-file-raw $file)))
+      (progn (translatePredicate (exists_file $file))
+              (translatePredicate (read_file_to_string $file $content ()))
+              $content))
 
 (= (write-file $file $str)
-   (if (isTelegram)
-        (Error write-file "DENIED: File mutation is disabled in Telegram mode.")
-       (progn (translatePredicate (open $file write $Out))
+   (progn (translatePredicate (open $file write $Out))
               (translatePredicate (write $Out $str))
               (translatePredicate (close $Out))
-              WRITE-FILE-SUCCESS)))
+              WRITE-FILE-SUCCESS))
 
 (= (append-file-raw $file $str)
    (progn (translatePredicate (open $file append $Out))
@@ -62,9 +53,7 @@
           APPEND-FILE-SUCCESS))
 
 (= (append-file $file $str)
-   (if (isTelegram)
-       (Error append-file "DENIED: File mutation is disabled in Telegram mode.")
-       (append-file-raw $file $str)))
+       (append-file-raw $file $str))
 
 (= (tavily-search $query)
    (py-call (agentverse.tavily_search $query)))
@@ -75,15 +64,11 @@
 !(import_prolog_functions_from_file (library OmegaClaw-Core ./src/skills.pl) (run_cmd first_char))
 
 (= (shell $cmd)
-   (if (isTelegram)
-        (Error shell "DENIED: Shell access is disabled in Telegram mode.")
-       (let $temp (cut) (translatePredicate (run_cmd $cmd $out)) $out)))
+   (let $temp (cut) (translatePredicate (run_cmd $cmd $out)) $out))
 
 (= (metta $str)
-   (if (isTelegram)
-        (Error metta "DENIED: MeTTa evaluation is disabled in Telegram mode.")
        (let $code (sread $str)
-            (repr (swrite (eval $code))))))
+            (repr (swrite (eval $code)))))
 
 (= (pin $x)
    PIN-SUCCESS)

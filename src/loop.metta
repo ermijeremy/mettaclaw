@@ -15,13 +15,17 @@
           (configure spamShield True)
           (configure sleepInterval 1)
           (configure LLM gpt-5.4)
-          (configure provider Anthropic) ;Anthropic or OpenAI or ASICloud
+          (configure provider OpenAI) ;Anthropic or OpenAI or ASICloud
           (configure maxOutputToken 6000)
           (configure reasoningMode medium)
           (configure wakeupInterval 600) ;600=10 minutes
           (change-state! &prevmsg "")
           (change-state! &lastresults "")
           (change-state! &loops (maxNewInputLoops))))
+
+(= (initKnowledge)
+   (progn (println! "Initializing knowledge base")
+          (println! (py-call (rag.init_knowledge)))))
 
 (= (getContext)
    (let* (($prompt (getPrompt))
@@ -60,11 +64,13 @@
                              ($_ (if (and (> $k 1) $msgnew)
                                      (change-state! &loops (maxNewInputLoops)) _)))
                             (if (> (get-state &loops) 0)
-                                (let* (($knowledge (getKnowledge (string-safe $msg)))
+                                (let* (
+                                   ;     ($knowledge (getKnowledge (string-safe $msg)))
                                        ($lastmessage (if $msgnew (HUMAN-MSG: $msg) (if (spamShield) " DO NOT RE-SEND OR SPAM!" "")))
                                        ($_ (change-state! &nextWakeAt (+ (get_time) (wakeupInterval))))
                                        ($_ (println! $lastmessage))
-                                       ($send (py-str ($prompt " KNOWLEDGE_CONTEXT: " $knowledge " " $lastmessage)))
+                                   ;     ($send (py-str ($prompt " KNOWLEDGE_CONTEXT: " $knowledge " " $lastmessage)))
+                                       ($send (py-str ($prompt $lastmessage)))
                                        ($_ (println! (CHARS_SENT: (string_length $send) $send)))
                                        ($respi (if (== (provider) OpenAI)
                                                    (useGPT (LLM) (maxOutputToken) (reasoningMode) $send)

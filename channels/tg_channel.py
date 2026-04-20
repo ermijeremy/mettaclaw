@@ -6,9 +6,9 @@ import logging
 import re
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from src.config_helper import is_category_blocked
+from src.config_helper import is_category_blocked, get_spam_protection_config
 
-
+import asyncio
 import yaml
 import os
 
@@ -28,6 +28,10 @@ log_file_path = os.path.join(os.path.dirname(__file__), "..", "telegram_bot.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(log_file_path),
+        logging.StreamHandler()
+    ]
 )
 
 class _TelegramChannel:
@@ -48,7 +52,6 @@ class _TelegramChannel:
         self.msg_lock = threading.Lock()
         
         # Default settings
-        self.window_seconds = 5
         self.reply_only_on_tag = True
         self.reply_on_reply = True
         self.admin_ids = []
@@ -61,6 +64,8 @@ class _TelegramChannel:
         self.chroma_db_path = os.path.join(os.path.dirname(__file__), "..", "chroma_db")
         self.history_path = os.path.join(os.path.dirname(__file__), "..", "memory", "history.metta")
 
+        self.reply_constraints = None
+        
         # Policy messages
         self.start_msg = "Telegram mode active."
         self.about_msg = "I am a MeTTaClaw agent."
@@ -117,6 +122,7 @@ class _TelegramChannel:
                     # Resolve relative DB paths against repo root, not process cwd.
                     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
                     self.chroma_db_path = os.path.abspath(os.path.join(repo_root, configured_db_path))
+            self.reply_constraints = tg_cfg.get("reply_constraints", {})
 
             logging.info(f"Loaded config from {config_path}: window={self.window_seconds}s, tag_only={self.reply_only_on_tag}")
         except Exception as e:
@@ -641,12 +647,20 @@ class _TelegramChannel:
             if getattr(message.from_user, "id", None) not in self.admin_ids and not self.dm_enabled:
                 return
         
-        # Filter out messages from other bots
+        # Filter out messages from other bots and muted users
         if message.from_user:
             if message.from_user.is_bot:
                 return
             if await self.is_user_muted(message.from_user):
                 return
+        
+        has_media = bool(message.photo or message.video or message.audio or message.voice)
+        if has_media and not self.reply_constraints.get("allow_media", False):
+            return
+            
+        has_files = bool(message.document)
+        if has_files and not self.reply_constraints.get("allow_files", False):
+            return
 
         if message.chat is not None:
             chat_id = message.chat.id
@@ -655,6 +669,21 @@ class _TelegramChannel:
         name = "unknown user" if user is None else (user.full_name or user.username or str(user.id))
         text = message.text
 
+        if await is_category_blocked(text):
+            logging.warning(f"Ethics/Security pass rejected incoming message from {name}: {text}")
+            message = "From: " + user.username + ": " + text if user and user.username else text
+            alert_ethics_violation("incoming_message", message)
+            return
+
+        is_tagged = self.bot_username and f"@{self.bot_username}" in text
+        is_reply = (self.reply_on_reply and 
+                    message.reply_to_message and 
+                    message.reply_to_message.from_user and 
+                    message.reply_to_message.from_user.id == self.bot_id)
+        
+        if self.reply_only_on_tag and not (is_tagged or is_reply):
+            return
+        
         with self.msg_lock:
             if chat_id not in self._message_buffers:
                 self._message_buffers[chat_id] = []
@@ -682,28 +711,15 @@ class _TelegramChannel:
             if not self.reply_only_on_tag or is_tagged or is_reply or is_dm_direct:
                 self._should_reply[chat_id] = True
 
-    async def _window_manager(self):
-        """Every window_seconds, batch buffered messages and surface them if bot was tagged."""
-        while self.running:
-            await asyncio.sleep(self.window_seconds)
-            with self.msg_lock:
-                for chat_id in list(self._message_buffers.keys()):
-                    buffer = self._message_buffers[chat_id]
-                    if not buffer:
-                        continue
-                    
-                    if self._should_reply.get(chat_id, False):
-                        batched = "\n".join([f"{m[1]}: {m[2]}" for m in buffer])
-                        reply_id = buffer[-1][3]
-                        self._ready_windows.append((chat_id, batched, reply_id))
-                        
-                    self._message_buffers[chat_id] = []
-                    self._should_reply[chat_id] = False
-                
-
     async def is_user_muted(self, user: types.User):
         """Feature: User mute / cool-down after repeated abuse."""
+        spam_config = get_spam_protection_config()
+        time_window = spam_config["time_window"]
+        message_limit = spam_config["message_limit"]
+        cooldown_duration = spam_config["cooldown_duration"]
+        admin_alert_threshold = spam_config["admin_alert_threshold"]
         user_id = user.id
+
         if user_id in self._muted_users:
             if time.time() < self._muted_users[user_id]:
                 return True
@@ -712,19 +728,19 @@ class _TelegramChannel:
                 
         now = time.time()
         history = self._user_msg_rates.get(user_id, [])
-        history = [ts for ts in history if now - ts < 10] # 10 second window for rate limiting
+        history = [ts for ts in history if now - ts < time_window]
         history.append(now)
         self._user_msg_rates[user_id] = history
         
-        if len(history) > 5:
+        if len(history) > message_limit:
             mute_count = self._user_mute_counts.get(user_id, 0) + 1
             self._user_mute_counts[user_id] = mute_count
 
             username = user.username or user.full_name or str(user_id)
             logging.warning(f"User with id: {user_id} | username: {username} muted for spamming.")
-            self._muted_users[user_id] = now + 120 # 2 minute cool-down
+            self._muted_users[user_id] = now + cooldown_duration
             
-            if mute_count >= 3:
+            if mute_count >= admin_alert_threshold:
                 for admin_id in self.admin_ids:
                     try:
                         alert_msg = (f"🚨 **Spam Alert** 🚨\n"
@@ -838,13 +854,28 @@ class _TelegramChannel:
             return
         
         fut = asyncio.run_coroutine_threadsafe(
-            self.bot.send_message(chat_id=self.chat_id, text=text, reply_to_message_id=self._reply_to_id),
+            self.bot.send_message(chat_id=self.chat_id,
+                                  text=text,
+                                  reply_to_message_id=self._reply_to_id,
+                                  parse_mode="MarkdownV2"),
             self.loop,
         )
         try:
             fut.result(timeout=10)
-        except Exception:
-            pass
+        except Exception as e:
+            logging.error(f"Telegram formatting error, falling back to plain text: {e}")
+            fut_fallback = asyncio.run_coroutine_threadsafe(
+                self.bot.send_message(
+                    chat_id=self.chat_id, 
+                    text=text, 
+                    reply_to_message_id=self._reply_to_id
+                ),
+                self.loop,
+            )
+            try:
+                fut_fallback.result(timeout=10)
+            except Exception:
+                pass
 
 _channel = _TelegramChannel()
 
@@ -883,8 +914,15 @@ def stop_telegram():
     _channel.stop()
 
 def send_message(text):
-    """Send a message to the active Telegram chat."""
-    if is_category_blocked(text):
+    """Send a message to the active Telegram chat."""    
+    # Run the async check safely in a synchronous context
+    try:
+        loop = asyncio.get_running_loop()
+        is_blocked = loop.run_until_complete(is_category_blocked(text))
+    except RuntimeError:
+        is_blocked = asyncio.run(is_category_blocked(text))
+
+    if is_blocked:
         alert_ethics_violation("send", text)
         return "Error: Refused: Unsafe response content."
         
