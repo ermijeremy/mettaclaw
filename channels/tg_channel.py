@@ -142,9 +142,28 @@ class _TelegramChannel:
                 return text
             return None
     
+    def _is_chat_authorized(self, message: types.Message) -> bool:
+        """Check if the chat and user are authorized to interact with the bot."""
+        
+        # Handle Dms
+        if message.chat.type == "private":
+            user_id = getattr(message.from_user, "id", None)
+            if user_id not in self.admin_ids and not self.dm_enabled:
+                return False
+            return True
+        
+        # Handle Groups
+        if self.restrict_to_config_chat and getattr(self, 'allowed_chat_id', None):
+            if str(message.chat.id) != str(self.allowed_chat_id):
+                return False
+                
+        return True
+    
     async def _start_cmd(self, message: types.Message):
         """Handle the /start command with interactive buttons."""
-        
+        if not self._is_chat_authorized(message):
+            return
+
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         builder = InlineKeyboardBuilder()
         builder.button(text="ℹ️ About", callback_data="show_about")
@@ -157,14 +176,21 @@ class _TelegramChannel:
 
     async def _about_cmd(self, message: types.Message):
         """Handle /about command."""
+        if not self._is_chat_authorized(message):
+            return
         await message.answer(self.about_msg)
 
     async def _privacy_cmd(self, message: types.Message):
         """Handle /privacy command."""
+        if not self._is_chat_authorized(message):
+            return
         await message.answer(self.privacy_msg)
 
     async def _kill_cmd(self, message: types.Message):
         """Handle global kill switch (admin only)."""
+        if not self._is_chat_authorized(message):
+            return
+        
         user_id = message.from_user.id if message.from_user else None
         if user_id in self.admin_ids:
             await message.answer("⚠️ Global Kill Switch activated. Shutting down...")
@@ -176,6 +202,9 @@ class _TelegramChannel:
     
     async def _pause_cmd(self, message: types.Message):
         """Handle /pause command (admin only)."""
+        if not self._is_chat_authorized(message):
+            return
+        
         if message.from_user.id not in self.admin_ids:
             return await message.answer("❌ Access denied.")
         
@@ -193,6 +222,9 @@ class _TelegramChannel:
 
     async def _togglesearch_cmd(self, message: types.Message):
         """Handle /togglesearch command (admin only)."""
+        if not self._is_chat_authorized(message):
+            return
+        
         if message.from_user.id not in self.admin_ids:
             return await message.answer("❌ Access denied.")
         
@@ -203,6 +235,9 @@ class _TelegramChannel:
     
     async def _purge_cmd(self, message: types.Message):
         """Handle /purge command (admin only)."""
+        if not self._is_chat_authorized(message):
+            return
+        
         if message.from_user.id not in self.admin_ids:
             return await message.answer("❌ Access denied.")
         
@@ -218,6 +253,10 @@ class _TelegramChannel:
 
     async def _on_callback_query(self, callback: types.CallbackQuery):
         """Handle button clicks."""
+        if not self._is_chat_authorized(callback.message):
+            await callback.answer("❌ This chat is not authorized.", show_alert=True)
+            return
+        
         if callback.data == "show_about":
             await callback.message.answer(self.about_msg)
         elif callback.data == "show_privacy":
@@ -244,16 +283,8 @@ class _TelegramChannel:
         if message.chat.id in self._paused_chats:
             return
 
-        # Check DM support
-        if message.chat.type == "private":
-            if getattr(message.from_user, "id", None) not in self.admin_ids and not self.dm_enabled:
-                return
-        # Check for multiple chat support and config restriction
-        else:
-            if self.restrict_to_config_chat:
-                if hasattr(self, 'allowed_chat_id') and self.allowed_chat_id:
-                    if str(message.chat.id) != str(self.allowed_chat_id):
-                        return
+        if not self._is_chat_authorized(message):
+            return
         
         # Filter out messages from other bots and muted users
         if message.from_user:
@@ -341,6 +372,9 @@ class _TelegramChannel:
 
     async def _on_media_rejected(self, message: types.Message):
         """Feature: Block files, images, audio, voice notes."""
+        if not self._is_chat_authorized(message):
+            return
+        
         logging.info("Denied capability invoked: Media/File uploaded. Discarding.")
         # Silently discard to prevent abuse surface / leakage
         pass
