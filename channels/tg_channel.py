@@ -1,20 +1,26 @@
 import asyncio
 import time
 import threading
-import time
 import logging
+import yaml
+import os
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from src.config_helper import is_category_blocked, get_spam_protection_config
 
-import asyncio
-import yaml
-import os
+
+log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, "telegram.log")
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(log_file)
+    ]
 )
 
 class _TelegramChannel:
