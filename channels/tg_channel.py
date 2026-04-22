@@ -44,6 +44,8 @@ class _TelegramChannel:
         self.reply_on_reply = True
         self.admin_ids = []
         self.dm_enabled = False
+        self.restrict_to_config_chat = True
+        self.allow_group_bots = False
         self.reply_constraints = None
         
         # Policy messages
@@ -83,6 +85,8 @@ class _TelegramChannel:
             self.reply_only_on_tag = tg_cfg.get("reply_only_when_directly_tagged", True)
             self.reply_on_reply = tg_cfg.get("reply_on_reply_to_bot", True)
             self.dm_enabled = tg_cfg.get("dm_support", {}).get("enabled", False)
+            self.restrict_to_config_chat = tg_cfg.get("restrict_to_config_chat", True)
+            self.allow_group_bots = tg_cfg.get("allow_group_bots", False)
             self.admin_ids = config.get("admin_controls", {}).get("admin_ids", [])
             self.reply_constraints = tg_cfg.get("reply_constraints", {})
 
@@ -171,7 +175,7 @@ class _TelegramChannel:
     
     async def _pause_cmd(self, message: types.Message):
         """Handle /pause command (admin only)."""
-        if str(message.from_user.id) not in self.admin_ids:
+        if message.from_user.id not in self.admin_ids:
             return await message.answer("❌ Access denied.")
         
         target_chat = message.chat.id
@@ -243,11 +247,16 @@ class _TelegramChannel:
         if message.chat.type == "private":
             if getattr(message.from_user, "id", None) not in self.admin_ids and not self.dm_enabled:
                 return
+        # Check for multiple chat support and config restriction
+        else:
+            if self.restrict_to_config_chat:
+                if self.chat_id and str(message.chat.id) != str(self.chat_id):
+                    return
         
         # Filter out messages from other bots and muted users
         if message.from_user:
-            if message.from_user.is_bot:
-                return
+            if message.chat.type not in ["group", "supergroup"] or not self.allow_group_bots:
+                    return
             if await self.is_user_muted(message.from_user):
                 return
         
@@ -348,12 +357,12 @@ class _TelegramChannel:
             if self.chat_id:
                 try:
                     eval_chat_id = str(self.chat_id)
-                    if not eval_chat_id.startswith('-'):
+                    if not eval_chat_id.startswith('-') and len(eval_chat_id) > 10:
                         eval_chat_id = f"-{eval_chat_id}"
                     admins = await self.bot.get_chat_administrators(eval_chat_id)
                     for admin in admins:
                         if admin.user.id not in self.admin_ids:
-                            self.admin_ids.append(admin.user.id)
+                            self.admin_ids.append(int(admin.user.id))
                     logging.info(f"Loaded admins from group {self.chat_id}. Total admins: {len(self.admin_ids)}")
                 except Exception as e:
                     logging.error(f"Failed to fetch administrators for chat {self.chat_id}: {e}")
