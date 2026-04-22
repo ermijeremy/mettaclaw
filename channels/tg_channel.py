@@ -147,6 +147,14 @@ class _TelegramChannel:
                 return text
             return None
     
+    def _is_admin_dm(self, message: types.Message) -> bool:
+
+        return (
+            message.chat.type == "private"
+            and message.from_user is not None
+            and message.from_user.id in self.admin_ids
+        )
+    
     def _is_chat_authorized(self, message: types.Message) -> bool:
         """Check if the chat and user are authorized to interact with the bot."""
         
@@ -168,6 +176,9 @@ class _TelegramChannel:
         """Handle the /start command with interactive buttons."""
         if not self._is_chat_authorized(message):
             return
+        
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
 
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         builder = InlineKeyboardBuilder()
@@ -181,39 +192,35 @@ class _TelegramChannel:
 
     async def _about_cmd(self, message: types.Message):
         """Handle /about command."""
-        if not self._is_chat_authorized(message):
-            return
+
         await message.answer(self.about_msg)
 
     async def _privacy_cmd(self, message: types.Message):
         """Handle /privacy command."""
         if not self._is_chat_authorized(message):
             return
+
         await message.answer(self.privacy_msg)
 
     async def _kill_cmd(self, message: types.Message):
         """Handle global kill switch (admin only)."""
-        if not self._is_chat_authorized(message):
-            return
-        
-        user_id = message.from_user.id if message.from_user else None
-        if user_id in self.admin_ids:
-            await message.answer("⚠️ Global Kill Switch activated. Shutting down...")
-            logging.critical(f"KILLED by admin {user_id}")
-            self.stop()
-            os._exit(0)
-        else:
-            await message.answer("❌ Access denied. Admin only.")
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+
+        await message.answer("⚠️ Global Kill Switch activated. Shutting down...")
+        logging.critical(f"KILLED by admin {message.from_user.id}")
+        self.stop()
+        os._exit(0)
     
     async def _pause_cmd(self, message: types.Message):
         """Handle /pause command (admin only)."""
         if not self._is_chat_authorized(message):
             return
         
-        if message.from_user.id not in self.admin_ids:
-            return await message.answer("❌ Access denied.")
+        if not self._is_admin_dm(message):
+             return await message.answer("❌ Admin commands only work in direct messages.")
         
-        target_chat = message.chat.id
+        target_chat = message.allowed_chat_id
         args = message.text.split()
         if len(args) > 1:
             target_chat = args[1]
@@ -227,25 +234,18 @@ class _TelegramChannel:
 
     async def _togglesearch_cmd(self, message: types.Message):
         """Handle /togglesearch command (admin only)."""
-        if not self._is_chat_authorized(message):
-            return
-        
-        if message.from_user.id not in self.admin_ids:
-            return await message.answer("❌ Access denied.")
-        
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+
         self.search_disabled = not self.search_disabled
         state = "DISABLED" if self.search_disabled else "ENABLED"
         await message.answer(f"🔍 Web search is now {state}.")
-
     
     async def _purge_cmd(self, message: types.Message):
         """Handle /purge command (admin only)."""
-        if not self._is_chat_authorized(message):
-            return
-        
-        if message.from_user.id not in self.admin_ids:
-            return await message.answer("❌ Access denied.")
-        
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+
         try:
             import chromadb
             client = chromadb.PersistentClient(path="./chroma_db")
@@ -293,8 +293,10 @@ class _TelegramChannel:
         
         # Filter out messages from other bots and muted users
         if message.from_user:
-            if message.chat.type not in ["group", "supergroup"] or not self.allow_group_bots:
+            if message.chat.type in ["group", "supergroup"]:
+                if message.from_user.is_bot and not self.allow_group_bots:
                     return
+            
             if await self.is_user_muted(message.from_user):
                 return
         
@@ -319,14 +321,18 @@ class _TelegramChannel:
             alert_ethics_violation("incoming_message", message)
             return
 
-        is_tagged = self.bot_username and f"@{self.bot_username}" in text
-        is_reply = (self.reply_on_reply and 
-                    message.reply_to_message and 
-                    message.reply_to_message.from_user and 
-                    message.reply_to_message.from_user.id == self.bot_id)
-        
-        if self.reply_only_on_tag and not (is_tagged or is_reply):
-            return
+        is_private = message.chat.type == "private"
+        if not is_private:
+            is_tagged = self.bot_username and f"@{self.bot_username}" in text
+            is_reply = (
+                self.reply_on_reply and
+                message.reply_to_message and
+                message.reply_to_message.from_user and
+                message.reply_to_message.from_user.id == self.bot_id
+            )
+
+            if self.reply_only_on_tag and not (is_tagged or is_reply):
+                return
         
         with self.msg_lock:
             self._message_queue.append((chat_id, f"{name}: {text}", message.message_id))
