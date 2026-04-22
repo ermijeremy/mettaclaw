@@ -137,6 +137,11 @@ class _TelegramChannel:
         with self.msg_lock:
             if self._message_queue:
                 ready_chat_id, text, reply_id = self._message_queue.pop(0)
+
+                if self.restrict_to_config_chat and getattr(self, 'allowed_chat_id', None):
+                    if str(ready_chat_id) != str(self.allowed_chat_id) and ready_chat_id not in self.admin_ids:
+                        return None
+                
                 self.chat_id = ready_chat_id
                 self._reply_to_id = reply_id
                 return text
