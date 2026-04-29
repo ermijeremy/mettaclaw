@@ -115,7 +115,7 @@ RUN cp ${OMEGACLAW_DIR}/run.metta /PeTTa/run.metta \
  && ln -s ${MEMORY_DIR}/chroma_db ./chroma_db \
  && chown -R 65534:65534 ${MEMORY_DIR} ${LOG_DIR} \
  && find ${MEMORY_DIR} -type f -exec chmod 0644 {} \; \
- && chmod 0444 ${MEMORY_DIR}/prompt.txt \
+ && chmod -f 0444 ${MEMORY_DIR}/prompt.txt ${MEMORY_DIR}/tg_prompt.txt ${MEMORY_DIR}/policy.md ${MEMORY_DIR}/telegram_profile.yaml \
  && chown -R 65534:65534 /opt/huggingface /opt/sentence_transformers
 
 USER 65534:65534
