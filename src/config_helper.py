@@ -54,21 +54,48 @@ async def use_model(text, categories):
     temperature = model_config.get("temperature", 0.0)
 
     try: 
-        prompt = (
-            f"Does the following expression fall into any of these strictly forbidden categories?\n\n"
-            f"Forbidden Categories: {', '.join(categories)}\n\n"
-            f"Expression: '{text}'\n\n"
-            f"Answer ONLY 'YES' if it violates a category, or 'NO' if it is safe."
-        )
+        prompt = f"""
+            You are a context-aware safety classifier.
+
+            Forbidden categories:
+            {categories}
+
+            Classify the expression. Do NOT flag:
+            - jokes
+            - idioms
+            - metaphors
+            - sarcasm
+            - figures of speech
+            - fictional/hypothetical non-actionable language
+
+            Flag only if the text clearly and literally expresses, requests, encourages,
+            or provides actionable content in a forbidden category.
+
+            Return JSON ONLY:
+            {{
+            "violates": true/false,
+            "confidence": 0.0-1.0,
+            "reason": "short reason",
+            "is_joke_or_figure_of_speech": true/false
+            }}
+
+            Expression: {text!r}
+            """
         client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
         response = await client.chat.completions.create(
-            model=model_name,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-            temperature=temperature
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0,
+        max_tokens=120,
+        response_format={"type": "json_object"},
         )
-        answer = response.choices[0].message.content.strip().upper()
-        return "YES" in answer
+        data = json.loads(response.choices[0].message.content)
+
+        return (
+            data["violates"] is True
+            and data["confidence"] >= 0.80
+            and not data.get("is_joke_or_figure_of_speech", False)
+        )
     
     except Exception as e:
         logging.error(f"OpenAI classification error: {e}")
@@ -84,7 +111,21 @@ async def _llm_classify(text, categories, memCheck=False):
             
     try:
         response = await openai_client.moderations.create(input=text)
-        return response.results[0].flagged
+        result = response.results[0]
+
+        thresholds = {
+            "violence": 0.85,
+            "harassment": 0.85,
+            "hate": 0.85,
+            "self-harm": 0.70,
+            "sexual/minors": 0.30,
+        }
+
+        for category, threshold in thresholds.items():
+            if result.category_scores.model_dump().get(category, 0) >= threshold:
+                return True
+
+        return False
         
     except Exception as e:
         logging.error(f"OpenAI moderation error: {e}")

@@ -4,6 +4,7 @@ import threading
 import logging
 import yaml
 import os
+import re
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -184,7 +185,7 @@ class _TelegramChannel:
                 
                 self.chat_id = ready_chat_id
                 self._reply_to_id = reply_id
-                return text
+                return f"[{ready_chat_id}] {text}"
             return None
     
     def _is_admin_dm(self, message: types.Message) -> bool:
@@ -195,12 +196,12 @@ class _TelegramChannel:
             and message.from_user.id in self.admin_ids
         )
     
-    def _is_chat_authorized(self, message: types.Message) -> bool:
+    def _is_chat_authorized(self, message: types.Message, user_id_override: int = None) -> bool:
         """Check if the chat and user are authorized to interact with the bot."""
         
         # Handle Dms
         if message.chat.type == "private":
-            user_id = getattr(message.from_user, "id", None)
+            user_id = user_id_override if user_id_override is not None else getattr(message.from_user, "id", None)
             if user_id not in self.admin_ids and not self.dm_enabled:
                 return False
             return True
@@ -297,7 +298,7 @@ class _TelegramChannel:
 
     async def _on_callback_query(self, callback: types.CallbackQuery):
         """Handle button clicks."""
-        if not self._is_chat_authorized(callback.message):
+        if not self._is_chat_authorized(callback.message, user_id_override=callback.from_user.id):
             await callback.answer("❌ This chat is not authorized.", show_alert=True)
             return
         
@@ -516,16 +517,19 @@ class _TelegramChannel:
         if self.loop and self._polling_task:
             self.loop.call_soon_threadsafe(self._polling_task.cancel)
 
-    def send_message(self, text):
+    def send_message(self, text, chat_id=None):
         """Send a text message to the active chat, dispatched to the bot's event loop."""
         text = text.replace("\\n", "\n")
-        if not self.connected or self.bot is None or self.loop is None or self.chat_id is None:
+        
+        target_chat_id = chat_id or self.chat_id
+        
+        if not self.connected or self.bot is None or self.loop is None or target_chat_id is None:
             return
         
         fut = asyncio.run_coroutine_threadsafe(
-            self.bot.send_message(chat_id=self.chat_id,
+            self.bot.send_message(chat_id=target_chat_id,
                                   text=text,
-                                  reply_to_message_id=self._reply_to_id,
+                                  reply_to_message_id=self._reply_to_id if target_chat_id == self.chat_id else None,
                                   parse_mode="MarkdownV2"),
             self.loop,
         )
@@ -535,9 +539,9 @@ class _TelegramChannel:
             logging.error(f"Telegram formatting error, falling back to plain text: {e}")
             fut_fallback = asyncio.run_coroutine_threadsafe(
                 self.bot.send_message(
-                    chat_id=self.chat_id, 
+                    chat_id=target_chat_id, 
                     text=text, 
-                    reply_to_message_id=self._reply_to_id
+                    reply_to_message_id=self._reply_to_id if target_chat_id == self.chat_id else None
                 ),
                 self.loop,
             )
@@ -572,6 +576,13 @@ def stop_telegram():
 
 def send_message(text):
     """Send a message to the active Telegram chat."""    
+    target_chat_id = _channel.chat_id
+    
+    m = re.match(r'^\[(-?\d+)\]\s*(.*)$', text, re.DOTALL)
+    if m:
+        target_chat_id = m.group(1)
+        text = m.group(2)
+
     # Run the async check safely in a synchronous context
     try:
         loop = asyncio.get_running_loop()
@@ -583,7 +594,7 @@ def send_message(text):
         alert_ethics_violation("send", text)
         return "Error: Refused: Unsafe response content."
         
-    _channel.send_message(text)
+    _channel.send_message(text, chat_id=target_chat_id)
 
 def is_search_disabled():
     """Check if admin disabled searching."""
