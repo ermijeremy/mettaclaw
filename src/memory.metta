@@ -17,8 +17,8 @@
 
 (= (getPrompt)
    (if (isTelegram)
-       (read-file-raw (library OmegaClaw-Core ./memory/tg_prompt.txt))
-       (read-file-raw (library OmegaClaw-Core ./memory/prompt.txt))))
+       (read-file (library OmegaClaw-Core ./memory/tg_prompt.txt))
+       (read-file (library OmegaClaw-Core ./memory/prompt.txt))))
 
 (= (getHistory)
    (let $ret (read-file (library OmegaClaw-Core ./memory/history.metta))

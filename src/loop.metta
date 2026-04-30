@@ -15,7 +15,7 @@
           (configure spamShield True)
           (configure sleepInterval 1)
           (configure LLM gpt-5.4)
-          (configure provider OpenAI) ;Anthropic or OpenAI or ASICloud
+          (configure provider Anthropic) ;Anthropic or OpenAI or ASICloud
           (configure maxOutputToken 6000)
           (configure reasoningMode medium)
           (configure wakeupInterval 600) ;600=10 minutes
@@ -46,6 +46,10 @@
    (case $sexpr (((Error $a $b) (let $new (append (get-state &error) (($msg $cmd)))
                                           (change-state! &error $new)))
                  ($else $sexpr))))
+
+(= (metta $str)
+   (let $code (sread $str)
+        (repr (swrite (eval $code)))))
 
 (= (omegaclaw)
    (omegaclaw 1))
