@@ -8,7 +8,7 @@ import re
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from src.config_helper import is_category_blocked, get_spam_protection_config
+from src.config_helper import is_category_blocked, get_spam_protection_config, _safe_int
 
 
 log_dir = os.path.join(os.path.dirname(__file__), "..", "logs")
@@ -51,7 +51,12 @@ class _TelegramChannel:
         self.dm_enabled = False
         self.restrict_to_config_chat = True
         self.allow_group_bots = False
+        self.purge_memory_enabled = True
+        self.memory_inspect_enabled = True
+        self.memory_delete_enabled = True
+        self.history_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "memory", "history.metta"))
         self.reply_constraints = None
+        self.history_lock = threading.Lock()
         
         # Policy messages
         self.start_msg = "Telegram mode active."
@@ -132,7 +137,11 @@ class _TelegramChannel:
             self.allow_group_bots = tg_cfg.get("allow_group_bots", False)
             self.allowed_chat_ids = self._normalize_chat_ids(tg_cfg.get("allowed_chats", []))
             self.allowed_chat_id = next(iter(self.allowed_chat_ids), None)
-            self.admin_ids = config.get("admin_controls", {}).get("admin_ids", [])
+            admin_cfg = config.get("admin_controls", {})
+            self.admin_ids = admin_cfg.get("admin_ids", [])
+            self.purge_memory_enabled = admin_cfg.get("purge_memory", True)
+            self.memory_inspect_enabled = admin_cfg.get("memory_inspect", True)
+            self.memory_delete_enabled = admin_cfg.get("memory_delete", True)
             self.reply_constraints = tg_cfg.get("reply_constraints", {})
 
             logging.info(f"Loaded config from {config_path}: window={self.window_seconds}s, tag_only={self.reply_only_on_tag}")
@@ -251,6 +260,196 @@ class _TelegramChannel:
         logging.critical(f"KILLED by admin {message.from_user.id}")
         self.stop()
         os._exit(0)
+
+    # History admin commands manage memory/history.metta from admin DMs only.
+
+    def _read_history_entries(self):
+        """Parse timestamped top-level entries from memory/history.metta."""
+        if not os.path.exists(self.history_path):
+            return []
+
+        with self.history_lock:
+            with open(self.history_path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+
+        starts = list(re.finditer(r'^\("\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}"', text, re.MULTILINE))
+        if not starts:
+            return []
+
+        entries = []
+        for i, match in enumerate(starts):
+            start = match.start()
+            end = starts[i + 1].start() if i + 1 < len(starts) else len(text)
+            raw = text[start:end].strip()
+            if raw:
+                entries.append({"timestamp": match.group(0)[2:21], "raw": raw})
+        return entries
+
+    def _write_history_entries(self, entries):
+        """Rewrite history.metta atomically from parsed entries."""
+        history_dir = os.path.dirname(self.history_path)
+        os.makedirs(history_dir, exist_ok=True)
+        tmp_path = f"{self.history_path}.tmp"
+        content = ""
+        if entries:
+            content = "\n\n".join(entry["raw"].strip() for entry in entries).strip() + "\n"
+
+        with self.history_lock:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, self.history_path)
+
+    async def _memory_cmd_help(self, message: types.Message):
+        """Show history admin subcommands."""
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+
+        lines = ["📜 History Admin Commands:"]
+        if self.memory_inspect_enabled:
+            lines.append("/history_list [limit] - List recent history entries")
+            lines.append("/history_get <index> - Inspect one history entry")
+            lines.append("/history_stats - Show history file stats")
+        if self.memory_delete_enabled:
+            lines.append("/history_delete <index> - Delete one history entry")
+        if self.purge_memory_enabled:
+            lines.append("/history_purge --yes - Purge history.metta")
+        if len(lines) == 1:
+            lines.append("History admin commands are disabled by config.")
+        await message.answer("\n".join(lines))
+
+    async def _history_list_cmd(self, message: types.Message):
+        """List recent history entries."""
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+        if not self.memory_inspect_enabled:
+            return await message.answer("⚠️ History inspect commands are disabled by config.")
+
+        args = (message.text or "").split()
+        limit = 10
+        if len(args) > 1:
+            limit = max(1, min(_safe_int(args[1], 10), 50))
+
+        try:
+            entries = self._read_history_entries()
+            total = len(entries)
+            if total == 0:
+                return await message.answer("ℹ️ history.metta has no parsed entries.")
+
+            selected = entries[-limit:]
+            base_index = total - len(selected) + 1
+            lines = [f"📜 history: showing {len(selected)}/{total} latest entries"]
+            for offset, entry in enumerate(selected):
+                idx = base_index + offset
+                snippet = " ".join(entry["raw"].splitlines())
+                if len(snippet) > 100:
+                    snippet = snippet[:97] + "..."
+                lines.append(f"- #{idx} | {entry['timestamp']} | {snippet}")
+
+            out = "\n".join(lines)
+            if len(out) > 3900:
+                out = out[:3897] + "..."
+            await message.answer(out)
+        except Exception as e:
+            await message.answer(f"❌ Failed to list history entries: {e}")
+
+    async def _history_get_cmd(self, message: types.Message):
+        """Inspect one history entry by 1-based index."""
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+        if not self.memory_inspect_enabled:
+            return await message.answer("⚠️ History inspect commands are disabled by config.")
+
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) < 2:
+            return await message.answer("Usage: /history_get <index>")
+
+        idx = _safe_int(args[1].strip(), -1)
+        if idx < 1:
+            return await message.answer("Usage: /history_get <index>")
+
+        try:
+            entries = self._read_history_entries()
+            total = len(entries)
+            if total == 0:
+                return await message.answer("ℹ️ history.metta has no parsed entries.")
+            if idx > total:
+                return await message.answer(f"ℹ️ history entry index out of range: {idx} (max {total})")
+
+            entry = entries[idx - 1]
+            out = f"📜 history entry #{idx}\nTimestamp: {entry['timestamp']}\n\n{entry['raw']}"
+            if len(out) > 3900:
+                out = out[:3897] + "..."
+            await message.answer(out)
+        except Exception as e:
+            await message.answer(f"❌ Failed to inspect history entry: {e}")
+
+    async def _history_stats_cmd(self, message: types.Message):
+        """Show basic stats for history.metta."""
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+        if not self.memory_inspect_enabled:
+            return await message.answer("⚠️ History inspect commands are disabled by config.")
+
+        try:
+            entries = self._read_history_entries()
+            size_bytes = os.path.getsize(self.history_path) if os.path.exists(self.history_path) else 0
+            latest = entries[-1]["timestamp"] if entries else "n/a"
+            lines = [
+                "📜 History Stats",
+                f"Path: {self.history_path}",
+                f"Entries: {len(entries)}",
+                f"Size: {size_bytes} bytes",
+                f"Latest timestamp: {latest}",
+            ]
+            await message.answer("\n".join(lines))
+        except Exception as e:
+            await message.answer(f"❌ Failed to inspect history stats: {e}")
+
+    async def _history_delete_cmd(self, message: types.Message):
+        """Delete one history entry by 1-based index."""
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+        if not self.memory_delete_enabled:
+            return await message.answer("⚠️ History delete command is disabled by config.")
+
+        args = (message.text or "").split(maxsplit=1)
+        if len(args) < 2:
+            return await message.answer("Usage: /history_delete <index>")
+
+        idx = _safe_int(args[1].strip(), -1)
+        if idx < 1:
+            return await message.answer("Usage: /history_delete <index>")
+
+        try:
+            entries = self._read_history_entries()
+            total = len(entries)
+            if total == 0:
+                return await message.answer("ℹ️ history.metta has no parsed entries.")
+            if idx > total:
+                return await message.answer(f"ℹ️ history entry index out of range: {idx} (max {total})")
+
+            removed = entries.pop(idx - 1)
+            self._write_history_entries(entries)
+            await message.answer(f"✅ Deleted history entry #{idx} ({removed['timestamp']}).")
+        except Exception as e:
+            await message.answer(f"❌ Failed to delete history entry: {e}")
+
+    async def _history_purge_cmd(self, message: types.Message):
+        """Purge history.metta after explicit confirmation."""
+        if not self._is_admin_dm(message):
+            return await message.answer("❌ Admin commands only work in direct messages.")
+        if not self.purge_memory_enabled:
+            return await message.answer("⚠️ History purge is disabled by config.")
+
+        args = (message.text or "").split()
+        if "--yes" not in args:
+            return await message.answer("⚠️ Confirm purge with: /history_purge --yes")
+
+        try:
+            self._write_history_entries([])
+            await message.answer("🗑️ history.metta purged successfully.")
+        except Exception as e:
+            await message.answer(f"❌ Failed to purge history.metta: {e}")
     
     async def _pause_cmd(self, message: types.Message):
         """Handle /pause command (admin only)."""
@@ -312,9 +511,17 @@ class _TelegramChannel:
                     "🛠 **Admin Commands:**\n"
                     "/pause [chat_id] - Pause/unpause a chat\n"
                     "/togglesearch - Enable/Disable Web Search\n"
-                    "/purge - Wipe ChromaDB Memory\n"
                     "/kill - Shutdown Bot globally"
                 )
+                if self.memory_inspect_enabled:
+                    cmd_list += "\n/history_list [limit] - List history entries"
+                    cmd_list += "\n/history_get <index> - Inspect one history entry"
+                    cmd_list += "\n/history_stats - Show history stats"
+                if self.memory_delete_enabled:
+                    cmd_list += "\n/history_delete <index> - Delete one history entry"
+                if self.purge_memory_enabled:
+                    cmd_list += "\n/purge - Wipe ChromaDB Memory"
+                    cmd_list += "\n/history_purge --yes - Wipe history.metta"
                 await callback.message.answer(cmd_list)
             else:
                 await callback.message.answer("❌ Access denied.")
@@ -463,6 +670,12 @@ class _TelegramChannel:
             self.dp.message.register(self._kill_cmd, Command("kill"))
             self.dp.message.register(self._pause_cmd, Command("pause"))
             self.dp.message.register(self._togglesearch_cmd, Command("togglesearch"))
+            self.dp.message.register(self._memory_cmd_help, Command("memory"))
+            self.dp.message.register(self._history_list_cmd, Command("history_list"))
+            self.dp.message.register(self._history_get_cmd, Command("history_get"))
+            self.dp.message.register(self._history_stats_cmd, Command("history_stats"))
+            self.dp.message.register(self._history_delete_cmd, Command("history_delete"))
+            self.dp.message.register(self._history_purge_cmd, Command("history_purge"))
             self.dp.message.register(self._purge_cmd, Command("purge"))
             self.dp.callback_query.register(self._on_callback_query)
             self.dp.message.register(self._on_message, F.text)

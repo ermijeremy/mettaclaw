@@ -156,3 +156,9 @@ def get_spam_protection_config():
         "cooldown_duration": spam_config.get("cooldown_duration", 120),
         "admin_alert_threshold": spam_config.get("admin_alert_threshold", 3)
     }
+
+def _safe_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

@@ -31,6 +31,8 @@ admin_controls:
   per_user_cooldown_or_mute: true
   disable_search_only: true
   purge_memory: true
+  memory_inspect: true
+  memory_delete: true
 
 classification_model:
   name: "gpt-4o-mini"
