@@ -299,24 +299,6 @@ class _TelegramChannel:
                 f.write(content)
             os.replace(tmp_path, self.history_path)
 
-    async def _memory_cmd_help(self, message: types.Message):
-        """Show history admin subcommands."""
-        if not self._is_admin_dm(message):
-            return await message.answer("❌ Admin commands only work in direct messages.")
-
-        lines = ["📜 History Admin Commands:"]
-        if self.memory_inspect_enabled:
-            lines.append("/history_list [limit] - List recent history entries")
-            lines.append("/history_get <index> - Inspect one history entry")
-            lines.append("/history_stats - Show history file stats")
-        if self.memory_delete_enabled:
-            lines.append("/history_delete <index> - Delete one history entry")
-        if self.purge_memory_enabled:
-            lines.append("/history_purge --yes - Purge history.metta")
-        if len(lines) == 1:
-            lines.append("History admin commands are disabled by config.")
-        await message.answer("\n".join(lines))
-
     async def _history_list_cmd(self, message: types.Message):
         """List recent history entries."""
         if not self._is_admin_dm(message):
@@ -382,28 +364,6 @@ class _TelegramChannel:
             await message.answer(out)
         except Exception as e:
             await message.answer(f"❌ Failed to inspect history entry: {e}")
-
-    async def _history_stats_cmd(self, message: types.Message):
-        """Show basic stats for history.metta."""
-        if not self._is_admin_dm(message):
-            return await message.answer("❌ Admin commands only work in direct messages.")
-        if not self.memory_inspect_enabled:
-            return await message.answer("⚠️ History inspect commands are disabled by config.")
-
-        try:
-            entries = self._read_history_entries()
-            size_bytes = os.path.getsize(self.history_path) if os.path.exists(self.history_path) else 0
-            latest = entries[-1]["timestamp"] if entries else "n/a"
-            lines = [
-                "📜 History Stats",
-                f"Path: {self.history_path}",
-                f"Entries: {len(entries)}",
-                f"Size: {size_bytes} bytes",
-                f"Latest timestamp: {latest}",
-            ]
-            await message.answer("\n".join(lines))
-        except Exception as e:
-            await message.answer(f"❌ Failed to inspect history stats: {e}")
 
     async def _history_delete_cmd(self, message: types.Message):
         """Delete one history entry by 1-based index."""
@@ -516,7 +476,6 @@ class _TelegramChannel:
                 if self.memory_inspect_enabled:
                     cmd_list += "\n/history_list [limit] - List history entries"
                     cmd_list += "\n/history_get <index> - Inspect one history entry"
-                    cmd_list += "\n/history_stats - Show history stats"
                 if self.memory_delete_enabled:
                     cmd_list += "\n/history_delete <index> - Delete one history entry"
                 if self.purge_memory_enabled:
@@ -670,10 +629,8 @@ class _TelegramChannel:
             self.dp.message.register(self._kill_cmd, Command("kill"))
             self.dp.message.register(self._pause_cmd, Command("pause"))
             self.dp.message.register(self._togglesearch_cmd, Command("togglesearch"))
-            self.dp.message.register(self._memory_cmd_help, Command("memory"))
             self.dp.message.register(self._history_list_cmd, Command("history_list"))
             self.dp.message.register(self._history_get_cmd, Command("history_get"))
-            self.dp.message.register(self._history_stats_cmd, Command("history_stats"))
             self.dp.message.register(self._history_delete_cmd, Command("history_delete"))
             self.dp.message.register(self._history_purge_cmd, Command("history_purge"))
             self.dp.message.register(self._purge_cmd, Command("purge"))
